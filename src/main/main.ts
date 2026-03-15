@@ -1108,7 +1108,7 @@ const getIMGatewayManager = () => {
         isOpenClawEngine: () => resolveCoworkAgentEngine() === 'openclaw',
         syncOpenClawConfig: async () => {
           await syncOpenClawConfig({
-            reason: 'im-gateway-telegram-openclaw',
+            reason: 'im-gateway-start',
             restartGatewayIfRunning: true,
           });
         },

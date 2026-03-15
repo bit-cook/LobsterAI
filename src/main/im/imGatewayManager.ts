@@ -786,42 +786,21 @@ export class IMGatewayManager extends EventEmitter {
   }
 
   /**
-   * Start all enabled gateways
+   * Start all enabled gateways.
+   *
+   * OpenClaw platforms (dingtalk/feishu/telegram/discord/qq/wecom) are batched
+   * so that `syncOpenClawConfig` + `ensureOpenClawGatewayConnected` are called
+   * only **once** regardless of how many OpenClaw platforms are enabled.
+   * This avoids N serial gateway restarts which cause message loss, Telegram
+   * `getUpdates` conflicts, and rate-limit issues.
    */
   async startAllEnabled(): Promise<void> {
     const config = this.getConfig();
 
-    if (config.dingtalk.enabled && config.dingtalk.clientId && config.dingtalk.clientSecret) {
-      try {
-        await this.startGateway('dingtalk');
-      } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start DingTalk: ${error.message}`);
-      }
-    }
+    // Ensure chat handler is ready (called once instead of per-platform)
+    this.updateChatHandler();
 
-    if (config.feishu.enabled && config.feishu.appId && config.feishu.appSecret) {
-      try {
-        await this.startGateway('feishu');
-      } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start Feishu: ${error.message}`);
-      }
-    }
-
-    if (config.telegram?.enabled && config.telegram.botToken) {
-      try {
-        await this.startGateway('telegram');
-      } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start Telegram (OpenClaw): ${error.message}`);
-      }
-    }
-
-    if (config.discord.enabled && config.discord.botToken) {
-      try {
-        await this.startGateway('discord');
-      } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start Discord: ${error.message}`);
-      }
-    }
+    // --- Non-OpenClaw platforms: start independently ---
 
     if (config.nim.enabled && config.nim.appKey && config.nim.account && config.nim.token) {
       try {
@@ -839,19 +818,36 @@ export class IMGatewayManager extends EventEmitter {
       }
     }
 
+    // --- OpenClaw platforms: collect and batch into a single sync ---
+
+    const openClawPlatformsToStart: IMPlatform[] = [];
+
+    if (config.dingtalk.enabled && config.dingtalk.clientId && config.dingtalk.clientSecret) {
+      openClawPlatformsToStart.push('dingtalk');
+    }
+    if (config.feishu.enabled && config.feishu.appId && config.feishu.appSecret) {
+      openClawPlatformsToStart.push('feishu');
+    }
+    if (config.telegram?.enabled && config.telegram.botToken) {
+      openClawPlatformsToStart.push('telegram');
+    }
+    if (config.discord.enabled && config.discord.botToken) {
+      openClawPlatformsToStart.push('discord');
+    }
     if (config.qq?.enabled && config.qq?.appId && config.qq?.appSecret) {
-      try {
-        await this.startGateway('qq');
-      } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start QQ: ${error.message}`);
-      }
+      openClawPlatformsToStart.push('qq');
+    }
+    if (config.wecom?.enabled && config.wecom?.botId && config.wecom?.secret) {
+      openClawPlatformsToStart.push('wecom');
     }
 
-    if (config.wecom?.enabled && config.wecom?.botId && config.wecom?.secret) {
+    if (openClawPlatformsToStart.length > 0) {
+      console.log(`[IMGatewayManager] Starting OpenClaw platforms in batch: ${openClawPlatformsToStart.join(', ')}`);
       try {
-        await this.startGateway('wecom');
+        await this.syncOpenClawConfig?.();
+        await this.ensureOpenClawGatewayConnected?.();
       } catch (error: any) {
-        console.error(`[IMGatewayManager] Failed to start WeCom: ${error.message}`);
+        console.error(`[IMGatewayManager] Failed to start OpenClaw platforms: ${error.message}`);
       }
     }
   }
