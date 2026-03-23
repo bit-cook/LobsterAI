@@ -25,6 +25,7 @@ interface CoworkSession {
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   activeSkillIds: string[];
+  agentId: string;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
@@ -43,6 +44,7 @@ interface CoworkSessionSummary {
   title: string;
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
+  agentId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -214,6 +216,8 @@ interface McpMarketplaceData {
   servers: McpMarketplaceServer[];
 }
 
+import type { Agent, PresetAgent } from './agent';
+
 interface IElectronAPI {
   platform: string;
   arch: string;
@@ -246,6 +250,15 @@ interface IElectronAPI {
     setEnabled: (options: { id: string; enabled: boolean }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     fetchMarketplace: () => Promise<{ success: boolean; data?: McpMarketplaceData; error?: string }>;
     refreshBridge: () => Promise<{ success: boolean; tools: number; error?: string }>;
+  };
+  agents: {
+    list: () => Promise<Agent[]>;
+    get: (id: string) => Promise<Agent | null>;
+    create: (request: { id?: string; name: string; description?: string; systemPrompt?: string; identity?: string; model?: string; icon?: string; skillIds?: string[]; source?: string; presetId?: string }) => Promise<Agent>;
+    update: (id: string, updates: { name?: string; description?: string; systemPrompt?: string; identity?: string; model?: string; icon?: string; skillIds?: string[]; enabled?: boolean }) => Promise<Agent>;
+    delete: (id: string) => Promise<void>;
+    presets: () => Promise<PresetAgent[]>;
+    addPreset: (presetId: string) => Promise<Agent>;
   };
   api: {
     fetch: (options: {
@@ -294,7 +307,7 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; agentId?: string; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) => Promise<{ success: boolean; session?: CoworkSession; error?: string; code?: string; engineStatus?: OpenClawEngineStatus }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
@@ -303,7 +316,7 @@ interface IElectronAPI {
     renameSession: (options: { sessionId: string; title: string }) => Promise<{ success: boolean; error?: string }>;
     getSession: (sessionId: string) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     remoteManaged: (sessionId: string) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
-    listSessions: () => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    listSessions: (agentId?: string) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;

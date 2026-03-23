@@ -5,6 +5,10 @@ import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
+import AgentList from './agent/AgentList';
+import AgentCreateModal from './agent/AgentCreateModal';
+import AgentPresetModal from './agent/AgentPresetModal';
+import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import ComposeIcon from './icons/ComposeIcon';
 import ConnectorIcon from './icons/ConnectorIcon';
 import SearchIcon from './icons/SearchIcon';
@@ -40,12 +44,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   updateBadge,
 }) => {
+  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
+  const filteredSessions = sessions.filter((s) => !s.agentId || s.agentId === currentAgentId);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [isCreateAgentOpen, setIsCreateAgentOpen] = useState(false);
+  const [isPresetAgentOpen, setIsPresetAgentOpen] = useState(false);
+  const [agentSettingsId, setAgentSettingsId] = useState<string | null>(null);
   const isMac = window.electron.platform === 'darwin';
 
   useEffect(() => {
@@ -109,12 +118,12 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSelectAll = useCallback(() => {
     setSelectedIds(prev => {
-      if (prev.size === sessions.length) {
+      if (prev.size === filteredSessions.length) {
         return new Set();
       }
-      return new Set(sessions.map(s => s.id));
+      return new Set(filteredSessions.map(s => s.id));
     });
-  }, [sessions]);
+  }, [filteredSessions]);
 
   const handleBatchDeleteClick = useCallback(() => {
     if (selectedIds.size === 0) return;
@@ -220,11 +229,16 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 pb-4">
+        <AgentList
+          onCreateAgent={() => setIsCreateAgentOpen(true)}
+          onAddPreset={() => setIsPresetAgentOpen(true)}
+          onAgentSettings={(id) => setAgentSettingsId(id)}
+        />
         <div className="px-3 pb-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('coworkHistory')}
         </div>
         <CoworkSessionList
-          sessions={sessions}
+          sessions={filteredSessions}
           currentSessionId={currentSessionId}
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}
@@ -239,7 +253,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        sessions={sessions}
+        sessions={filteredSessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
@@ -251,7 +265,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <label className="flex items-center gap-2 cursor-pointer text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
             <input
               type="checkbox"
-              checked={selectedIds.size === sessions.length && sessions.length > 0}
+              checked={selectedIds.size === filteredSessions.length && filteredSessions.length > 0}
               onChange={handleSelectAll}
               className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-claude-accent cursor-pointer"
             />
@@ -333,6 +347,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       )}
+      <AgentCreateModal isOpen={isCreateAgentOpen} onClose={() => setIsCreateAgentOpen(false)} />
+      <AgentPresetModal isOpen={isPresetAgentOpen} onClose={() => setIsPresetAgentOpen(false)} />
+      <AgentSettingsPanel agentId={agentSettingsId} onClose={() => setAgentSettingsId(null)} />
     </aside>
   );
 };

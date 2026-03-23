@@ -643,6 +643,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         executionMode: 'local' as CoworkExecutionMode,
         activeSkillIds: [],
         messages,
+        agentId: 'main',
         createdAt: now,
         updatedAt: now,
       };
@@ -838,6 +839,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       systemPrompt: options.systemPrompt,
       confirmationMode: options.confirmationMode,
       imageAttachments: options.imageAttachments,
+      agentId: options.agentId,
     });
   }
 
@@ -924,6 +926,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skillIds?: string[];
       confirmationMode?: 'modal' | 'text';
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      agentId?: string;
     },
   ): Promise<void> {
     if (!prompt.trim()) {
@@ -958,7 +961,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.emit('message', sessionId, userMessage);
     }
 
-    const sessionKey = this.toSessionKey(sessionId);
+    const agentId = options.agentId || session.agentId || 'main';
+    const sessionKey = this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
 
     this.store.updateSession(sessionId, { status: 'running' });
@@ -971,6 +975,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionId,
       prompt,
       options.systemPrompt ?? session.systemPrompt,
+      agentId,
     );
     const completionPromise = new Promise<void>((resolve, reject) => {
       this.pendingTurns.set(sessionId, { resolve, reject });
@@ -1046,6 +1051,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionId: string,
     prompt: string,
     systemPrompt?: string,
+    agentId?: string,
   ): Promise<string> {
     const normalizedSystemPrompt = (systemPrompt ?? '').trim();
     const previousSystemPrompt = this.lastSystemPromptBySession.get(sessionId) ?? '';
@@ -1072,7 +1078,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const client = this.requireGatewayClient();
-    const sessionKey = this.toSessionKey(sessionId);
+    const sessionKey = this.toSessionKey(sessionId, agentId);
     let hasHistory = false;
     try {
       const history = await client.request<{ messages?: unknown[] }>('chat.history', {
@@ -1796,7 +1802,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     this.rememberSessionKey(session.id, normalizedSessionKey);
-    this.rememberSessionKey(session.id, this.toSessionKey(session.id));
+    this.rememberSessionKey(session.id, this.toSessionKey(session.id, session.agentId));
     return session.id;
   }
 
@@ -3459,8 +3465,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     pending.reject(error);
   }
 
-  private toSessionKey(sessionId: string): string {
-    return buildManagedSessionKey(sessionId);
+  private toSessionKey(sessionId: string, agentId?: string): string {
+    return buildManagedSessionKey(sessionId, agentId);
   }
 
   private requireGatewayClient(): GatewayClientLike {
@@ -3491,7 +3497,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    const managedKey = this.toSessionKey(normalizedSessionId);
+    const session = this.store.getSession(normalizedSessionId);
+    const managedKey = this.toSessionKey(normalizedSessionId, session?.agentId);
     if (!keys.includes(managedKey)) {
       keys.push(managedKey);
     }

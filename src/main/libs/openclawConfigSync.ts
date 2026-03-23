@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import type { CoworkConfig, CoworkExecutionMode } from '../coworkStore';
+import type { CoworkConfig, CoworkExecutionMode, Agent } from '../coworkStore';
 import type { TelegramOpenClawConfig, DiscordOpenClawConfig } from '../im/types';
 import type { DingTalkOpenClawConfig, FeishuOpenClawConfig, QQOpenClawConfig, WecomOpenClawConfig, PopoOpenClawConfig, NimConfig, WeixinOpenClawConfig } from '../im/types';
 import { resolveRawApiConfig } from './claudeSettings';
@@ -44,6 +44,7 @@ const normalizeModelName = (modelId: string): string => {
   const slashIndex = trimmed.lastIndexOf('/');
   return slashIndex >= 0 ? trimmed.slice(slashIndex + 1) : trimmed;
 };
+
 
 const MANAGED_OWNER_ALLOW_FROM = [
   // Internal `chat.send` turns identify the sender as bare `gateway-client`.
@@ -433,6 +434,7 @@ type OpenClawConfigSyncDeps = {
   getWeixinConfig: () => WeixinOpenClawConfig | null;
   getMcpBridgeConfig?: () => McpBridgeConfig | null;
   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+  getAgents?: () => Agent[];
 };
 
 export class OpenClawConfigSync {
@@ -449,6 +451,7 @@ export class OpenClawConfigSync {
   private readonly getWeixinConfig: () => WeixinOpenClawConfig | null;
   private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+  private readonly getAgents?: () => Agent[];
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -464,6 +467,7 @@ export class OpenClawConfigSync {
     this.getWeixinConfig = deps.getWeixinConfig;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
     this.getSkillsList = deps.getSkillsList;
+    this.getAgents = deps.getAgents;
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -481,6 +485,7 @@ export class OpenClawConfigSync {
       const workspaceDir = (coworkConfig.workingDirectory || '').trim();
       const resolvedWorkspaceDir = workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
       const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
+      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
       if (agentsMdWarning) result.agentsMdWarning = agentsMdWarning;
       return result;
     }
@@ -563,6 +568,7 @@ export class OpenClawConfigSync {
           },
           ...(workspaceDir ? { workspace: path.resolve(workspaceDir) } : {}),
         },
+        ...this.buildAgentsList(),
       },
       session: {
         dmScope: 'per-channel-peer',
@@ -945,6 +951,9 @@ export class OpenClawConfigSync {
     const resolvedWorkspaceDir = workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
     const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
 
+    // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
+    this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+
     return {
       ok: true,
       changed: configChanged || sessionStoreChanged,
@@ -1085,7 +1094,7 @@ export class OpenClawConfigSync {
         }
       }
 
-      if (!shouldMigrateManagedModelRefs || !sessionKey.startsWith('agent:main:lobsterai:')) {
+      if (!shouldMigrateManagedModelRefs || !(/^agent:[^:]+:lobsterai:/.test(sessionKey))) {
         continue;
       }
 
@@ -1241,6 +1250,117 @@ export class OpenClawConfigSync {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn('[OpenClawConfigSync] Failed to sync AGENTS.md:', msg);
       return msg;
+    }
+  }
+
+  /**
+   * Build the `agents.list` config array for openclaw.json.
+   *
+   * The main agent uses the user's configured workspace directory (via
+   * `agents.defaults.workspace`).  Non-main agents omit `workspace` so
+   * OpenClaw falls back to its default: `{STATE_DIR}/workspace-{agentId}/`.
+   * This keeps custom agent workspaces under the openclaw state directory
+   * rather than coupling them to the user's working directory.
+   *
+   * Per-agent `identity` (name, emoji) is set from the agent database so
+   * OpenClaw picks it up natively.
+   */
+  private buildAgentsList(): { list?: Array<Record<string, unknown>> } {
+    const agents = this.getAgents?.() ?? [];
+
+    const list: Array<Record<string, unknown>> = [
+      {
+        id: 'main',
+        default: true,
+      },
+    ];
+
+    for (const agent of agents) {
+      if (agent.id === 'main' || !agent.enabled) continue;
+
+      list.push({
+        id: agent.id,
+        // Omit `workspace` — OpenClaw defaults to {STATE_DIR}/workspace-{agentId}/
+        // which keeps agent workspaces decoupled from the user's working directory.
+        ...(agent.name || agent.icon ? {
+          identity: {
+            ...(agent.name ? { name: agent.name } : {}),
+            ...(agent.icon ? { emoji: agent.icon } : {}),
+          },
+        } : {}),
+      });
+    }
+
+    return list.length > 0 ? { list } : {};
+  }
+
+  /**
+   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
+   * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
+   * get their own workspace directories under the openclaw state directory.
+   */
+  private syncPerAgentWorkspaces(_mainWorkspaceDir: string, coworkConfig: CoworkConfig): void {
+    const agents = this.getAgents?.() ?? [];
+    // Use the openclaw state directory as base, matching OpenClaw's own fallback
+    // logic: {STATE_DIR}/workspace-{agentId}/
+    const stateDir = this.engineManager.getStateDir();
+
+    for (const agent of agents) {
+      if (agent.id === 'main' || !agent.enabled) continue;
+
+      const agentWorkspace = path.join(stateDir, `workspace-${agent.id}`);
+      try {
+        ensureDir(agentWorkspace);
+
+        // Sync SOUL.md — agent's system prompt
+        const soulPath = path.join(agentWorkspace, 'SOUL.md');
+        const soulContent = (agent.systemPrompt || '').trim();
+        this.syncFileIfChanged(soulPath, soulContent ? `${soulContent}\n` : '');
+
+        // Sync IDENTITY.md — agent's identity description
+        const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
+        const identityContent = (agent.identity || '').trim();
+        this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
+
+        // Sync AGENTS.md for this agent (reuse same logic as main agent)
+        this.syncAgentsMd(agentWorkspace, {
+          ...coworkConfig,
+          systemPrompt: agent.systemPrompt || '',
+        });
+
+        // Ensure memory directory exists
+        const memoryDir = path.join(agentWorkspace, 'memory');
+        ensureDir(memoryDir);
+
+        // Ensure MEMORY.md exists
+        const memoryPath = path.join(agentWorkspace, 'MEMORY.md');
+        if (!fs.existsSync(memoryPath)) {
+          fs.writeFileSync(memoryPath, '', 'utf8');
+        }
+      } catch (error) {
+        console.warn(
+          `[OpenClawConfigSync] Failed to sync workspace for agent ${agent.id}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
+
+  /** Write a file only if its content has changed. */
+  private syncFileIfChanged(filePath: string, content: string): void {
+    try {
+      const existing = fs.readFileSync(filePath, 'utf8');
+      if (existing === content) return;
+    } catch {
+      // File doesn't exist yet
+    }
+    if (content) {
+      this.atomicWriteFile(filePath, content);
+    } else {
+      // Empty content — create empty file if it doesn't exist
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, '', 'utf8');
+      }
     }
   }
 
