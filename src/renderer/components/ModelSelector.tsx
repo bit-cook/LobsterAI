@@ -65,7 +65,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ dropdownDirection = 'down
       }`}
     >
       <div className="flex flex-col">
-        <span className="text-sm">{model.name}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm">{model.name}</span>
+          {model.supportsImage && (
+            <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+              {i18nService.t('imageInput')}
+            </span>
+          )}
+        </div>
         {model.provider && (
           <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{model.provider}</span>
         )}
