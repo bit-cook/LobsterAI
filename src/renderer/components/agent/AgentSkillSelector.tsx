@@ -45,22 +45,22 @@ const AgentSkillSelector: React.FC<AgentSkillSelectorProps> = ({ selectedSkillId
   const skillList = (
     <>
       {enabledSkills.length > 5 && (
-        <div className={isExpanded ? 'mb-2' : 'px-3 py-2 border-b dark:border-claude-darkBorder border-claude-border'}>
+        <div className={isExpanded ? 'mb-2' : 'px-3 py-2 border-b border-border'}>
           <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 dark:text-claude-darkTextSecondary/50 text-claude-textSecondary/50" />
+            <MagnifyingGlassIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary/50" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={i18nService.t('agentSkillsSearch') || 'Search skills...'}
-              className="w-full pl-8 pr-3 py-1.5 text-sm rounded border dark:border-claude-darkBorder border-claude-border bg-transparent dark:text-claude-darkText text-claude-text"
+              className="w-full pl-8 pr-3 py-1.5 text-sm rounded border border-border bg-transparent text-foreground"
             />
           </div>
         </div>
       )}
       <div className={isExpanded ? 'flex-1 overflow-y-auto' : 'max-h-48 overflow-y-auto'}>
         {filteredSkills.length === 0 ? (
-          <div className="px-3 py-3 text-sm dark:text-claude-darkTextSecondary/50 text-claude-textSecondary/50 text-center">
+          <div className="px-3 py-3 text-sm text-secondary/50 text-center">
             {enabledSkills.length === 0 ? 'No skills installed' : 'No matching skills'}
           </div>
         ) : (
@@ -71,23 +71,23 @@ const AgentSkillSelector: React.FC<AgentSkillSelectorProps> = ({ selectedSkillId
                 key={skill.id}
                 type="button"
                 onClick={() => toggle(skill.id)}
-                className={`w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors rounded-lg ${
-                  isSelected ? 'bg-claude-accent/5 dark:bg-claude-accent/10' : ''
+                className={`w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-surface-raised transition-colors rounded-lg ${
+                  isSelected ? 'bg-primary/5' : ''
                 }`}
               >
                 <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center ${
                   isSelected
-                    ? 'bg-claude-accent border-claude-accent'
-                    : 'dark:border-claude-darkBorder border-claude-border'
+                    ? 'bg-primary border-primary'
+                    : 'border-border'
                 }`}>
                   {isSelected && <CheckIcon className="h-3 w-3 text-white" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+                  <div className="text-sm font-medium text-foreground truncate">
                     {skill.name}
                   </div>
                   {skill.description && (
-                    <div className="text-xs dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60 truncate">
+                    <div className="text-xs text-secondary/60 truncate">
                       {skill.description}
                     </div>
                   )}
@@ -104,7 +104,7 @@ const AgentSkillSelector: React.FC<AgentSkillSelectorProps> = ({ selectedSkillId
   if (isExpanded) {
     return (
       <div className="flex flex-col h-full">
-        <p className="text-xs dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60 mb-3">
+        <p className="text-xs text-secondary/60 mb-3">
           {i18nService.t('agentSkillsHint') || 'Select skills available to this Agent. Leave empty to use all enabled skills.'}
         </p>
         {skillList}
@@ -115,15 +115,15 @@ const AgentSkillSelector: React.FC<AgentSkillSelectorProps> = ({ selectedSkillId
   /* ── Compact variant: collapsible dropdown ── */
   return (
     <div>
-      <label className="block text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <label className="block text-sm font-medium text-secondary mb-1">
         {i18nService.t('agentSkills') || 'Skills'}
       </label>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 rounded-lg border dark:border-claude-darkBorder border-claude-border bg-transparent dark:text-claude-darkText text-claude-text text-sm hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-transparent text-foreground text-sm hover:bg-surface-raised transition-colors"
       >
-        <span className={selectedCount > 0 ? '' : 'dark:text-claude-darkTextSecondary/50 text-claude-textSecondary/50'}>
+        <span className={selectedCount > 0 ? '' : 'text-secondary/50'}>
           {selectedCount > 0
             ? enabledSkills
                 .filter((s) => selectedSkillIds.includes(s.id))
@@ -132,15 +132,15 @@ const AgentSkillSelector: React.FC<AgentSkillSelectorProps> = ({ selectedSkillId
             : i18nService.t('agentSkillsNone') || 'Click to select skills'}
         </span>
         {expanded
-          ? <ChevronUpIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-          : <ChevronDownIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />}
+          ? <ChevronUpIcon className="h-4 w-4 text-secondary" />
+          : <ChevronDownIcon className="h-4 w-4 text-secondary" />}
       </button>
       {showList && (
-        <div className="mt-1 rounded-lg border dark:border-claude-darkBorder border-claude-border overflow-hidden">
+        <div className="mt-1 rounded-lg border border-border overflow-hidden">
           {skillList}
         </div>
       )}
-      <p className="mt-1 text-xs dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60">
+      <p className="mt-1 text-xs text-secondary/60">
         {i18nService.t('agentSkillsHint') || 'Select skills available to this Agent. Leave empty to use all enabled skills.'}
       </p>
     </div>

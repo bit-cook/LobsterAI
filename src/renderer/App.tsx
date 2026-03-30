@@ -574,7 +574,7 @@ const App: React.FC = () => {
     />
   ) : null;
   const windowsStandaloneTitleBar = isWindows ? (
-    <div className="draggable relative h-9 shrink-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
+    <div className="draggable relative h-9 shrink-0 bg-surface-raised">
       <WindowTitleBar isOverlayActive={isOverlayActive} />
     </div>
   ) : null;
@@ -583,15 +583,15 @@ const App: React.FC = () => {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <div className="flex-1 flex items-center justify-center dark:bg-claude-darkBg bg-claude-bg">
+        <div className="flex-1 flex items-center justify-center bg-background">
           <div className="flex flex-col items-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-claude-accent to-claude-accentHover flex items-center justify-center shadow-glow-accent animate-pulse">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-glow-accent animate-pulse">
               <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
             </div>
-            <div className="w-24 h-1 rounded-full bg-claude-accent/20 overflow-hidden">
-              <div className="h-full w-1/2 rounded-full bg-claude-accent animate-shimmer" />
+            <div className="w-24 h-1 rounded-full bg-primary/20 overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-primary animate-shimmer" />
             </div>
-            <div className="dark:text-claude-darkText text-claude-text text-xl font-medium">{i18nService.t('loading')}</div>
+            <div className="text-foreground text-xl font-medium">{i18nService.t('loading')}</div>
           </div>
         </div>
       </div>
@@ -602,15 +602,15 @@ const App: React.FC = () => {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <div className="flex-1 flex flex-col items-center justify-center dark:bg-claude-darkBg bg-claude-bg">
+        <div className="flex-1 flex flex-col items-center justify-center bg-background">
           <div className="flex flex-col items-center space-y-6 max-w-md px-6">
             <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg">
               <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
             </div>
-            <div className="dark:text-claude-darkText text-claude-text text-xl font-medium text-center">{initError}</div>
+            <div className="text-foreground text-xl font-medium text-center">{initError}</div>
             <button
               onClick={() => handleShowSettings()}
-              className="px-6 py-2.5 bg-claude-accent hover:bg-claude-accentHover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
             >
               {i18nService.t('openSettings')}
             </button>
@@ -629,7 +629,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
+    <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
@@ -649,7 +649,7 @@ const App: React.FC = () => {
           updateBadge={!isSidebarCollapsed ? updateBadge : null}
         />
         <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-          <div className="relative h-full min-h-0 rounded-xl dark:bg-claude-darkBg bg-claude-bg overflow-hidden">
+          <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             <EngineStartupOverlay />
             {mainView === 'skills' ? (
               <SkillsView
