@@ -180,11 +180,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authLearnMore: '了解更多',
     authValueAddedServices: '增值服务',
     authZeroCredits: '0积分',
-    planFree: '免费',
-    planStandard: '标准',
-    planAdvanced: '进阶',
-    planPro: '专业',
-    
+
     // 错误信息
     failedToLoadSettings: '加载设置失败',
     failedToSaveSettings: '保存设置失败',
@@ -1377,10 +1373,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authLearnMore: 'Learn More',
     authValueAddedServices: 'Premium Services',
     authZeroCredits: '0 credits',
-    planFree: 'Free',
-    planAdvanced: 'Advanced',
-    planPro: 'Pro',
-    
+
     // Error Messages
     failedToLoadSettings: 'Failed to load settings',
     failedToSaveSettings: 'Failed to save settings',
