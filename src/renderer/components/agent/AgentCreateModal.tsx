@@ -44,6 +44,14 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
 
   useEffect(() => {
     if (!isOpen) return;
+    setName('');
+    setDescription('');
+    setSystemPrompt('');
+    setIdentity('');
+    setIcon('');
+    setSkillIds([]);
+    setActiveTab('basic');
+    setBoundPlatforms(new Set());
     imService.loadConfig().then((cfg) => {
       if (cfg) setImConfig(cfg);
     });
