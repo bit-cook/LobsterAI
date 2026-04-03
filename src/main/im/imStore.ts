@@ -1166,15 +1166,34 @@ export class IMStore {
   }
 
   /**
-   * List all session mappings for a platform
+   * List all session mappings for a platform, optionally filtered by IM bot accountId.
+   *
+   * The accountId is encoded as the first colon-delimited segment of im_conversation_id
+   * (e.g. "c9c41984:direct:ou_xxx" → accountId "c9c41984"). This convention is used by
+   * multi-instance platforms (Feishu, DingTalk, QQ) while single-instance platforms
+   * use "default" as the prefix. Filtering by accountId therefore requires no schema
+   * migration and is fully backward-compatible with existing rows.
    */
-  listSessionMappings(platform?: Platform): IMSessionMapping[] {
-    const query = platform
-      ? 'SELECT im_conversation_id, platform, cowork_session_id, agent_id, created_at, last_active_at FROM im_session_mappings WHERE platform = ? ORDER BY last_active_at DESC'
-      : 'SELECT im_conversation_id, platform, cowork_session_id, agent_id, created_at, last_active_at FROM im_session_mappings ORDER BY last_active_at DESC';
-    const rows = platform
-      ? (this.db.prepare(query).all(platform) as SessionMappingRow[])
-      : (this.db.prepare(query).all() as SessionMappingRow[]);
+  listSessionMappings(platform?: Platform, accountId?: string): IMSessionMapping[] {
+    let query: string;
+    let params: unknown[];
+
+    if (platform && accountId) {
+      // Include direct conversations owned by this bot instance (prefix matches accountId)
+      // and all group conversations for the platform, since group membership per-bot
+      // is not yet stored — group: prefix is a temporary heuristic until im_account_id
+      // column is introduced.
+      query = "SELECT im_conversation_id, platform, cowork_session_id, agent_id, created_at, last_active_at FROM im_session_mappings WHERE platform = ? AND (im_conversation_id LIKE ? OR im_conversation_id LIKE 'group:%') ORDER BY last_active_at DESC";
+      params = [platform, `${accountId}:%`];
+    } else if (platform) {
+      query = 'SELECT im_conversation_id, platform, cowork_session_id, agent_id, created_at, last_active_at FROM im_session_mappings WHERE platform = ? ORDER BY last_active_at DESC';
+      params = [platform];
+    } else {
+      query = 'SELECT im_conversation_id, platform, cowork_session_id, agent_id, created_at, last_active_at FROM im_session_mappings ORDER BY last_active_at DESC';
+      params = [];
+    }
+
+    const rows = this.db.prepare(query).all(...params) as SessionMappingRow[];
     return rows.map(row => ({
       imConversationId: row.im_conversation_id,
       platform: row.platform as Platform,

@@ -485,7 +485,7 @@ interface IElectronAPI {
       channels?: import('../../scheduledTask/types').ScheduledTaskChannelOption[];
       error?: string;
     }>;
-    listChannelConversations?: (channel: string) => Promise<{
+    listChannelConversations?: (channel: string, accountId?: string) => Promise<{
       success: boolean;
       conversations?: import('../../scheduledTask/types').ScheduledTaskConversationOption[];
       error?: string;

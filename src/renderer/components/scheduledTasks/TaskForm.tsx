@@ -182,7 +182,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
 
     let cancelled = false;
     setConversationsLoading(true);
-    void scheduledTaskService.listChannelConversations(form.notifyChannel).then((result) => {
+    void scheduledTaskService.listChannelConversations(form.notifyChannel, form.notifyAccountId).then((result) => {
       if (cancelled) return;
       setConversations(result);
       setConversationsLoading(false);
@@ -196,7 +196,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.notifyChannel]);
+  }, [form.notifyChannel, form.notifyAccountId]);
 
   const updateForm = (patch: Partial<FormState>) => {
     setForm((current) => ({ ...current, ...patch }));

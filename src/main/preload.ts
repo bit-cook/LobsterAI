@@ -422,7 +422,7 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),
-    listChannelConversations: (channel: string) => ipcRenderer.invoke(ScheduledTaskIpc.ListChannelConversations, channel),
+    listChannelConversations: (channel: string, accountId?: string) => ipcRenderer.invoke(ScheduledTaskIpc.ListChannelConversations, channel, accountId),
 
     // Stream event listeners
     onStatusUpdate: (callback: (data: any) => void) => {
