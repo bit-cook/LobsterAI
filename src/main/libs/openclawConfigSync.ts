@@ -1190,19 +1190,13 @@ export class OpenClawConfigSync {
           name: inst.instanceName,
           appId: inst.appId,
           clientSecret: `\${${secretEnvVar}}`,
-          dmPolicy: inst.dmPolicy || 'open',
+          // v2026.4.8 schema removed dmPolicy/groupPolicy/groupAllowFrom/historyLimit.
+          // Only allowFrom and markdownSupport remain as valid account properties.
           allowFrom: (() => {
             const ids = inst.allowFrom?.length ? [...inst.allowFrom] : [];
             if (inst.dmPolicy === 'open' && !ids.includes('*')) ids.push('*');
             return ids;
           })(),
-          groupPolicy: inst.groupPolicy || 'open',
-          groupAllowFrom: (() => {
-            const ids = inst.groupAllowFrom?.length ? [...inst.groupAllowFrom] : [];
-            if (inst.groupPolicy === 'open' && !ids.includes('*')) ids.push('*');
-            return ids;
-          })(),
-          historyLimit: inst.historyLimit || 50,
           markdownSupport: inst.markdownSupport ?? true,
         };
         if (inst.imageServerBaseUrl) {
