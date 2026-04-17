@@ -3,8 +3,9 @@
  * SQLite operations for IM configuration storage
  */
 
-import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+
+import Database from 'better-sqlite3';
 
 import { PlatformRegistry } from '../../shared/platform';
 import {
@@ -915,6 +916,10 @@ export class IMStore {
     this.setConfigValue('nim', { ...current, ...config });
   }
 
+  private deleteLegacyNimConfig(): void {
+    this.db.prepare('DELETE FROM im_config WHERE key = ?').run('nim');
+  }
+
   getNimInstances(): NimInstanceConfig[] {
     const rows = this.db
       .prepare('SELECT key, value FROM im_config WHERE key LIKE ?')
@@ -949,6 +954,7 @@ export class IMStore {
   }
 
   setNimInstanceConfig(instanceId: string, config: Partial<NimInstanceConfig>): void {
+    this.deleteLegacyNimConfig();
     const current = this.getNimInstanceConfig(instanceId);
     if (current) {
       this.setConfigValue(`nim:${instanceId}`, { ...current, ...config });
@@ -965,6 +971,9 @@ export class IMStore {
   deleteNimInstance(instanceId: string): void {
     this.db.prepare('DELETE FROM im_config WHERE key = ?').run(`nim:${instanceId}`);
     this.db.prepare('DELETE FROM im_session_mappings WHERE platform = ?').run(`nim:${instanceId}`);
+    if (this.getNimInstances().length === 0) {
+      this.deleteLegacyNimConfig();
+    }
   }
 
   getNimMultiInstanceConfig(): NimMultiInstanceConfig {
@@ -974,6 +983,13 @@ export class IMStore {
   }
 
   setNimMultiInstanceConfig(config: NimMultiInstanceConfig): void {
+    this.deleteLegacyNimConfig();
+    const nextIds = new Set(config.instances.map((inst) => inst.instanceId));
+    for (const inst of this.getNimInstances()) {
+      if (!nextIds.has(inst.instanceId)) {
+        this.deleteNimInstance(inst.instanceId);
+      }
+    }
     for (const inst of config.instances) {
       this.setNimInstanceConfig(inst.instanceId, inst);
     }

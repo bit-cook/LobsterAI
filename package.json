@@ -40,8 +40,8 @@
       },
       {
         "id": "openclaw-nim-channel",
-        "npm": "git+https://github.com/netease-im/openclaw-nim-channel.git#1f70cb7a1f5dcb918a735a01b31d1c810f6ca558",
-        "version": "develop-1f70cb7"
+        "npm": "git+https://github.com/netease-im/openclaw-nim-channel.git#1.1.1",
+        "version": "1.1.1"
       },
       {
         "id": "openclaw-netease-bee",

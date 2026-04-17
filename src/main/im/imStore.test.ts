@@ -1,4 +1,5 @@
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import { IMStore } from './imStore';
 
 class FakeDb {
@@ -12,39 +13,38 @@ class FakeDb {
   }
 
   prepare(sql: string) {
-    const self = this;
     return {
-      run(...params: unknown[]) {
+      run: (...params: unknown[]) => {
         if (sql.includes('INSERT') && sql.includes('im_config')) {
-          self.store.set(String(params[0]), String(params[1]));
-          self.writeCount++;
+          this.store.set(String(params[0]), String(params[1]));
+          this.writeCount++;
           return;
         }
         if (sql.includes('UPDATE im_config')) {
           // UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?
-          self.store.set(String(params[2]), String(params[0]));
-          self.writeCount++;
+          this.store.set(String(params[2]), String(params[0]));
+          this.writeCount++;
           return;
         }
         if (sql.includes('DELETE FROM im_config WHERE key = ?')) {
-          self.store.delete(String(params[0]));
-          self.writeCount++;
+          this.store.delete(String(params[0]));
+          this.writeCount++;
           return;
         }
         // CREATE TABLE, ALTER TABLE, etc: count as write
-        self.writeCount++;
+        this.writeCount++;
       },
-      get(...params: unknown[]) {
+      get: (...params: unknown[]) => {
         if (sql.includes('SELECT value FROM im_config WHERE key = ?')) {
-          const value = self.store.get(String(params[0]));
+          const value = this.store.get(String(params[0]));
           return value !== undefined ? { value } : undefined;
         }
         return undefined;
       },
-      all(...params: unknown[]) {
+      all: (...params: unknown[]) => {
         if (sql.includes('SELECT key, value FROM im_config WHERE key LIKE ?')) {
           const prefix = String(params[0]).replace('%', '');
-          return Array.from(self.store.entries())
+          return Array.from(this.store.entries())
             .filter(([key]) => key.startsWith(prefix))
             .map(([key, value]) => ({ key, value }));
         }
@@ -162,4 +162,68 @@ test('IMStore prefers nim:* records over legacy nim config', () => {
     appKey: 'new-app',
     account: 'new-bot',
   });
+});
+
+test('IMStore removes deleted nim instances during multi-instance persistence', () => {
+  const db = new FakeDb();
+  const store = new IMStore(db as unknown as ConstructorParameters<typeof IMStore>[0]);
+
+  store.setNimInstanceConfig('nim-1', {
+    instanceId: 'nim-1',
+    instanceName: 'NIM Bot 1',
+    enabled: true,
+    appKey: 'app-key-1',
+    account: 'bot-1',
+    token: 'token-1',
+  });
+  store.setNimInstanceConfig('nim-2', {
+    instanceId: 'nim-2',
+    instanceName: 'NIM Bot 2',
+    enabled: true,
+    appKey: 'app-key-2',
+    account: 'bot-2',
+    token: 'token-2',
+  });
+
+  store.setNimMultiInstanceConfig({
+    instances: [
+      {
+        instanceId: 'nim-2',
+        instanceName: 'NIM Bot 2',
+        enabled: true,
+        appKey: 'app-key-2',
+        account: 'bot-2',
+        token: 'token-2',
+      },
+    ],
+  });
+
+  const config = store.getNimMultiInstanceConfig();
+
+  expect(config.instances).toHaveLength(1);
+  expect(config.instances[0]?.instanceId).toBe('nim-2');
+  expect(db.getValue('nim:nim-1')).toBeUndefined();
+});
+
+test('IMStore does not resurrect deleted nim instances from legacy nim config', () => {
+  const db = new FakeDb();
+  const store = new IMStore(db as unknown as ConstructorParameters<typeof IMStore>[0]);
+
+  store.setNimConfig({
+    enabled: true,
+    appKey: 'legacy-app',
+    account: 'legacy-bot',
+    token: 'legacy-token',
+  });
+
+  const migrated = store.getNimMultiInstanceConfig();
+  const instanceId = migrated.instances[0]?.instanceId;
+
+  expect(instanceId).toBeTruthy();
+  store.deleteNimInstance(instanceId!);
+
+  const config = store.getNimMultiInstanceConfig();
+
+  expect(config.instances).toHaveLength(0);
+  expect(db.getValue('nim')).toBeUndefined();
 });

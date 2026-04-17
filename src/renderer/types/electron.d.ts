@@ -470,6 +470,24 @@ interface IElectronAPI {
     }>;
     approvePairingCode: (platform: string, code: string) => Promise<{ success: boolean; error?: string }>;
     rejectPairingRequest: (platform: string, code: string) => Promise<{ success: boolean; error?: string }>;
+    nimQrLoginStart: () => Promise<{
+      uuid: string;
+      qrValue: string;
+      expiresIn: number;
+      pollInterval: number;
+      credentialKind: 'split';
+      rawData: Record<string, unknown> | null;
+    }>;
+    nimQrLoginPoll: (uuid: string) => Promise<{
+      status: 'pending' | 'success' | 'failed';
+      credentials?: {
+        appKey: string;
+        account: string;
+        token: string;
+      };
+      errorCode?: string;
+      error?: string;
+    }>;
     addNimInstance: (name: string) => Promise<{ success: boolean; instance?: NimInstanceConfig; error?: string }>;
     deleteNimInstance: (instanceId: string) => Promise<{ success: boolean; error?: string }>;
     setNimInstanceConfig: (instanceId: string, config: any, options?: { syncGateway?: boolean }) => Promise<{ success: boolean; error?: string }>;
