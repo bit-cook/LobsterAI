@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
+import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 interface ApiResponse {
   ok: boolean;
   status: number;
@@ -126,13 +127,6 @@ interface OpenClawEngineStatus {
 
 interface OpenClawSessionPolicyConfig {
   keepAlive: '1d' | '7d' | '30d' | '365d';
-}
-
-interface AppUpdateDownloadProgress {
-  received: number;
-  total: number | undefined;
-  percent: number | undefined;
-  speed: number | undefined;
 }
 
 interface WindowState {
@@ -426,10 +420,12 @@ interface IElectronAPI {
     getSystemLocale: () => Promise<string>;
   };
   appUpdate: {
-    download: (url: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
-    cancelDownload: () => Promise<{ success: boolean }>;
-    install: (filePath: string) => Promise<{ success: boolean; error?: string }>;
-    onDownloadProgress: (callback: (data: AppUpdateDownloadProgress) => void) => () => void;
+    getState: () => Promise<AppUpdateRuntimeState>;
+    checkNow: (options?: { manual?: boolean }) => Promise<AppUpdateCheckResult>;
+    retryDownload: () => Promise<{ success: boolean; state: AppUpdateRuntimeState }>;
+    cancelDownload: () => Promise<{ success: boolean; state: AppUpdateRuntimeState }>;
+    installReady: () => Promise<{ success: boolean; state: AppUpdateRuntimeState; error?: string }>;
+    onStateChanged: (callback: (data: AppUpdateRuntimeState) => void) => () => void;
   };
   log: {
     getPath: () => Promise<string>;
@@ -470,6 +466,27 @@ interface IElectronAPI {
     }>;
     approvePairingCode: (platform: string, code: string) => Promise<{ success: boolean; error?: string }>;
     rejectPairingRequest: (platform: string, code: string) => Promise<{ success: boolean; error?: string }>;
+    nimQrLoginStart: () => Promise<{
+      uuid: string;
+      qrValue: string;
+      expiresIn: number;
+      pollInterval: number;
+      credentialKind: 'split';
+      rawData: Record<string, unknown> | null;
+    }>;
+    nimQrLoginPoll: (uuid: string) => Promise<{
+      status: 'pending' | 'success' | 'failed';
+      credentials?: {
+        appKey: string;
+        account: string;
+        token: string;
+      };
+      errorCode?: string;
+      error?: string;
+    }>;
+    addNimInstance: (name: string) => Promise<{ success: boolean; instance?: NimInstanceConfig; error?: string }>;
+    deleteNimInstance: (instanceId: string) => Promise<{ success: boolean; error?: string }>;
+    setNimInstanceConfig: (instanceId: string, config: any, options?: { syncGateway?: boolean }) => Promise<{ success: boolean; error?: string }>;
     addQQInstance: (name: string) => Promise<{ success: boolean; instance?: QQInstanceConfig; error?: string }>;
     deleteQQInstance: (instanceId: string) => Promise<{ success: boolean; error?: string }>;
     setQQInstanceConfig: (instanceId: string, config: any, options?: { syncGateway?: boolean }) => Promise<{ success: boolean; error?: string }>;
@@ -507,7 +524,7 @@ interface IElectronAPI {
       channels?: import('../../scheduledTask/types').ScheduledTaskChannelOption[];
       error?: string;
     }>;
-    listChannelConversations?: (channel: string, accountId?: string) => Promise<{
+    listChannelConversations?: (channel: string, accountId?: string, filterAccountId?: string) => Promise<{
       success: boolean;
       conversations?: import('../../scheduledTask/types').ScheduledTaskConversationOption[];
       error?: string;
@@ -605,7 +622,7 @@ interface IMGatewayConfig {
   telegram: TelegramOpenClawConfig;
   qq: QQMultiInstanceConfig;
   discord: DiscordOpenClawConfig;
-  nim: NimConfig;
+  nim: NimMultiInstanceConfig;
   'netease-bee': NeteaseBeeChanConfig;
   wecom: WecomMultiInstanceConfig;
   popo: PopoOpenClawConfig;
@@ -766,17 +783,36 @@ interface NimAdvancedConfig {
   mediaMaxMb?: number;
   textChunkLimit?: number;
   debug?: boolean;
+  legacyLogin?: boolean;
+  weblbsUrl?: string;
+  link_web?: string;
+  nos_uploader?: string;
+  nos_downloader_v2?: string;
+  nosSsl?: boolean;
+  nos_accelerate?: string;
+  nos_accelerate_host?: string;
 }
 
-interface NimConfig {
+interface NimOpenClawConfig {
   enabled: boolean;
+  nimToken?: string;
   appKey: string;
   account: string;
   token: string;
+  antispamEnabled?: boolean;
   p2p?: NimP2pConfig;
   team?: NimTeamConfig;
   qchat?: NimQChatConfig;
   advanced?: NimAdvancedConfig;
+}
+
+interface NimInstanceConfig extends NimOpenClawConfig {
+  instanceId: string;
+  instanceName: string;
+}
+
+interface NimMultiInstanceConfig {
+  instances: NimInstanceConfig[];
 }
 
 interface NeteaseBeeChanConfig {
@@ -888,11 +924,20 @@ interface IMGatewayStatus {
   qq: QQMultiInstanceStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
-  nim: NimGatewayStatus;
+  nim: NimMultiInstanceStatus;
   'netease-bee': NeteaseBeeChanGatewayStatus;
   wecom: WecomMultiInstanceStatus;
   popo: PopoGatewayStatus;
   weixin: WeixinGatewayStatus;
+}
+
+interface NimInstanceStatus extends NimGatewayStatus {
+  instanceId: string;
+  instanceName: string;
+}
+
+interface NimMultiInstanceStatus {
+  instances: NimInstanceStatus[];
 }
 
 type IMConnectivityVerdict = 'pass' | 'warn' | 'fail';
