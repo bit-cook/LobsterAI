@@ -28,6 +28,8 @@ test('setConfig preserves loaded OpenClaw session policy', () => {
     embeddingModel: '',
     embeddingLocalModelPath: '',
     embeddingVectorWeight: 0.7,
+    embeddingRemoteBaseUrl: '',
+    embeddingRemoteApiKey: '',
     openClawSessionPolicy: {
       keepAlive: '365d',
     },

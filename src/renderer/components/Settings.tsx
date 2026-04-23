@@ -810,6 +810,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [embeddingModel, setEmbeddingModel] = useState<string>(coworkConfig.embeddingModel ?? '');
   const [embeddingLocalModelPath, setEmbeddingLocalModelPath] = useState<string>(coworkConfig.embeddingLocalModelPath ?? '');
   const [embeddingVectorWeight, setEmbeddingVectorWeight] = useState<number>(coworkConfig.embeddingVectorWeight ?? 0.7);
+  const [embeddingRemoteBaseUrl, setEmbeddingRemoteBaseUrl] = useState<string>(coworkConfig.embeddingRemoteBaseUrl ?? '');
+  const [embeddingRemoteApiKey, setEmbeddingRemoteApiKey] = useState<string>(coworkConfig.embeddingRemoteApiKey ?? '');
   const [showEmbeddingAdvanced, setShowEmbeddingAdvanced] = useState<boolean>(false);
   const [openClawSessionKeepAlive, setOpenClawSessionKeepAlive] = useState<OpenClawSessionKeepAlive>(
     coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays,
@@ -837,6 +839,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setEmbeddingModel(coworkConfig.embeddingModel ?? '');
     setEmbeddingLocalModelPath(coworkConfig.embeddingLocalModelPath ?? '');
     setEmbeddingVectorWeight(coworkConfig.embeddingVectorWeight ?? 0.7);
+    setEmbeddingRemoteBaseUrl(coworkConfig.embeddingRemoteBaseUrl ?? '');
+    setEmbeddingRemoteApiKey(coworkConfig.embeddingRemoteApiKey ?? '');
     setOpenClawSessionKeepAlive(coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays);
   }, [
     coworkConfig.agentEngine,
@@ -849,6 +853,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     coworkConfig.embeddingModel,
     coworkConfig.embeddingLocalModelPath,
     coworkConfig.embeddingVectorWeight,
+    coworkConfig.embeddingRemoteBaseUrl,
+    coworkConfig.embeddingRemoteApiKey,
   ]);
 
   useEffect(() => () => {
@@ -1487,7 +1493,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     || embeddingProvider !== (coworkConfig.embeddingProvider ?? 'local')
     || embeddingModel !== (coworkConfig.embeddingModel ?? '')
     || embeddingLocalModelPath !== (coworkConfig.embeddingLocalModelPath ?? '')
-    || embeddingVectorWeight !== (coworkConfig.embeddingVectorWeight ?? 0.7);
+    || embeddingVectorWeight !== (coworkConfig.embeddingVectorWeight ?? 0.7)
+    || embeddingRemoteBaseUrl !== (coworkConfig.embeddingRemoteBaseUrl ?? '')
+    || embeddingRemoteApiKey !== (coworkConfig.embeddingRemoteApiKey ?? '');
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
 
   const openClawProgressPercent = useMemo(() => {
@@ -1843,6 +1851,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
           embeddingModel,
           embeddingLocalModelPath,
           embeddingVectorWeight,
+          embeddingRemoteBaseUrl,
+          embeddingRemoteApiKey,
         });
         if (!updated) {
           throw new Error(i18nService.t('coworkConfigSaveFailed'));
@@ -3105,7 +3115,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
                     >
                       <option value="local">{i18nService.t('coworkMemoryEmbeddingProviderLocal')}</option>
-                      <option value="auto">{i18nService.t('coworkMemoryEmbeddingProviderAuto')}</option>
+                      <option value="openai">{i18nService.t('coworkMemoryEmbeddingProviderOpenai')}</option>
+                      <option value="gemini">{i18nService.t('coworkMemoryEmbeddingProviderGemini')}</option>
+                      <option value="voyage">{i18nService.t('coworkMemoryEmbeddingProviderVoyage')}</option>
+                      <option value="mistral">{i18nService.t('coworkMemoryEmbeddingProviderMistral')}</option>
+                      <option value="ollama">{i18nService.t('coworkMemoryEmbeddingProviderOllama')}</option>
                     </select>
                     <div className="text-xs text-secondary mt-1">
                       {i18nService.t('coworkMemoryEmbeddingProviderHint')}
@@ -3121,13 +3135,51 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                       type="text"
                       value={embeddingModel}
                       onChange={(e) => setEmbeddingModel(e.target.value)}
-                      placeholder="hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf"
+                      placeholder={embeddingProvider === 'local'
+                        ? 'hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf'
+                        : 'text-embedding-3-large'}
                       className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface font-mono"
                     />
                     <div className="text-xs text-secondary mt-1">
                       {i18nService.t('coworkMemoryEmbeddingModelHint')}
                     </div>
                   </div>
+
+                  {/* Remote config fields (shown for non-local providers) */}
+                  {embeddingProvider !== 'local' && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-foreground mb-1">
+                          {i18nService.t('coworkMemoryEmbeddingRemoteBaseUrl')}
+                        </label>
+                        <input
+                          type="text"
+                          value={embeddingRemoteBaseUrl}
+                          onChange={(e) => setEmbeddingRemoteBaseUrl(e.target.value)}
+                          placeholder="https://api.openai.com/v1"
+                          className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface font-mono"
+                        />
+                        <div className="text-xs text-secondary mt-1">
+                          {i18nService.t('coworkMemoryEmbeddingRemoteBaseUrlHint')}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-foreground mb-1">
+                          {i18nService.t('coworkMemoryEmbeddingRemoteApiKey')}
+                        </label>
+                        <input
+                          type="password"
+                          value={embeddingRemoteApiKey}
+                          onChange={(e) => setEmbeddingRemoteApiKey(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface font-mono"
+                        />
+                        <div className="text-xs text-secondary mt-1">
+                          {i18nService.t('coworkMemoryEmbeddingRemoteApiKeyHint')}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   {/* Collapsible advanced section */}
                   <button

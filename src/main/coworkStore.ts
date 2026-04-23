@@ -41,6 +41,8 @@ const DEFAULT_EMBEDDING_PROVIDER = 'local';
 const DEFAULT_EMBEDDING_MODEL = 'hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf';
 const DEFAULT_EMBEDDING_LOCAL_MODEL_PATH = '';
 const DEFAULT_EMBEDDING_VECTOR_WEIGHT = 0.7;
+const DEFAULT_EMBEDDING_REMOTE_BASE_URL = '';
+const DEFAULT_EMBEDDING_REMOTE_API_KEY = '';
 
 // Regexes and helper inlined from the removed coworkMemoryExtractor module.
 // Used only by shouldAutoDeleteMemoryText() during startup memory cleanup.
@@ -487,6 +489,8 @@ export interface CoworkConfig {
   embeddingModel: string;
   embeddingLocalModelPath: string;
   embeddingVectorWeight: number;
+  embeddingRemoteBaseUrl: string;
+  embeddingRemoteApiKey: string;
 }
 
 export type CoworkConfigUpdate = Partial<Pick<
@@ -505,6 +509,8 @@ CoworkConfig,
   | 'embeddingModel'
   | 'embeddingLocalModelPath'
   | 'embeddingVectorWeight'
+  | 'embeddingRemoteBaseUrl'
+  | 'embeddingRemoteApiKey'
 >>;
 
 
@@ -1075,6 +1081,8 @@ export class CoworkStore {
       'embeddingModel',
       'embeddingLocalModelPath',
       'embeddingVectorWeight',
+      'embeddingRemoteBaseUrl',
+      'embeddingRemoteApiKey',
     ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
@@ -1106,6 +1114,8 @@ export class CoworkStore {
       embeddingModel: cfg.get('embeddingModel') || DEFAULT_EMBEDDING_MODEL,
       embeddingLocalModelPath: cfg.get('embeddingLocalModelPath') || DEFAULT_EMBEDDING_LOCAL_MODEL_PATH,
       embeddingVectorWeight: parseEmbeddingVectorWeight(cfg.get('embeddingVectorWeight')),
+      embeddingRemoteBaseUrl: cfg.get('embeddingRemoteBaseUrl') || DEFAULT_EMBEDDING_REMOTE_BASE_URL,
+      embeddingRemoteApiKey: cfg.get('embeddingRemoteApiKey') || DEFAULT_EMBEDDING_REMOTE_API_KEY,
     };
   }
 
@@ -1307,6 +1317,34 @@ export class CoworkStore {
       `,
         )
         .run(String(Math.max(0, Math.min(1, config.embeddingVectorWeight))), now);
+    }
+
+    if (config.embeddingRemoteBaseUrl !== undefined) {
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('embeddingRemoteBaseUrl', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+        )
+        .run(String(config.embeddingRemoteBaseUrl), now);
+    }
+
+    if (config.embeddingRemoteApiKey !== undefined) {
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('embeddingRemoteApiKey', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+        )
+        .run(String(config.embeddingRemoteApiKey), now);
     }
   }
 

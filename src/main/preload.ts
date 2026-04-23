@@ -257,6 +257,8 @@ contextBridge.exposeInMainWorld('electron', {
       embeddingModel?: string;
       embeddingLocalModelPath?: string;
       embeddingVectorWeight?: number;
+      embeddingRemoteBaseUrl?: string;
+      embeddingRemoteApiKey?: string;
     }) =>
       ipcRenderer.invoke('cowork:config:set', config),
     listMemoryEntries: (input: {

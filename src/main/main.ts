@@ -3547,6 +3547,8 @@ if (!gotTheLock) {
     embeddingModel?: string;
     embeddingLocalModelPath?: string;
     embeddingVectorWeight?: number;
+    embeddingRemoteBaseUrl?: string;
+    embeddingRemoteApiKey?: string;
   }) => {
     try {
       const normalizedExecutionMode =
@@ -3584,7 +3586,7 @@ if (!gotTheLock) {
         ? config.embeddingEnabled
         : undefined;
       const normalizedEmbeddingProvider = typeof config.embeddingProvider === 'string'
-        && (config.embeddingProvider === 'local' || config.embeddingProvider === 'auto')
+        && ['local', 'openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(config.embeddingProvider)
         ? config.embeddingProvider
         : undefined;
       const normalizedEmbeddingModel = typeof config.embeddingModel === 'string'
@@ -3596,6 +3598,12 @@ if (!gotTheLock) {
       const normalizedEmbeddingVectorWeight = typeof config.embeddingVectorWeight === 'number'
         && Number.isFinite(config.embeddingVectorWeight)
         ? Math.max(0, Math.min(1, config.embeddingVectorWeight))
+        : undefined;
+      const normalizedEmbeddingRemoteBaseUrl = typeof config.embeddingRemoteBaseUrl === 'string'
+        ? config.embeddingRemoteBaseUrl.trim()
+        : undefined;
+      const normalizedEmbeddingRemoteApiKey = typeof config.embeddingRemoteApiKey === 'string'
+        ? config.embeddingRemoteApiKey.trim()
         : undefined;
       const normalizedConfig: Parameters<CoworkStore['setConfig']>[0] = {
         ...config,
@@ -3612,6 +3620,8 @@ if (!gotTheLock) {
         embeddingModel: normalizedEmbeddingModel,
         embeddingLocalModelPath: normalizedEmbeddingLocalModelPath,
         embeddingVectorWeight: normalizedEmbeddingVectorWeight,
+        embeddingRemoteBaseUrl: normalizedEmbeddingRemoteBaseUrl,
+        embeddingRemoteApiKey: normalizedEmbeddingRemoteApiKey,
       };
       const previousConfig = getCoworkStore().getConfig();
       const previousWorkingDir = previousConfig.workingDirectory;
@@ -3645,6 +3655,8 @@ if (!gotTheLock) {
         || normalizedEmbeddingModel !== undefined
         || normalizedEmbeddingLocalModelPath !== undefined
         || normalizedEmbeddingVectorWeight !== undefined
+        || normalizedEmbeddingRemoteBaseUrl !== undefined
+        || normalizedEmbeddingRemoteApiKey !== undefined
         || (normalizedConfig.workingDirectory !== undefined && normalizedConfig.workingDirectory !== previousWorkingDir);
       if (shouldSyncOpenClawConfig) {
         const syncResult = await syncOpenClawConfig({

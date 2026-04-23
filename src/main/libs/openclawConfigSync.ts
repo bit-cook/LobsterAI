@@ -1094,6 +1094,12 @@ export class OpenClawConfigSync {
               ...(coworkConfig.embeddingProvider === 'local' && coworkConfig.embeddingLocalModelPath
                 ? { local: { modelPath: coworkConfig.embeddingLocalModelPath } }
                 : {}),
+              ...(coworkConfig.embeddingProvider !== 'local' ? {
+                remote: {
+                  ...(coworkConfig.embeddingRemoteBaseUrl ? { baseUrl: coworkConfig.embeddingRemoteBaseUrl } : {}),
+                  ...(coworkConfig.embeddingRemoteApiKey ? { apiKey: coworkConfig.embeddingRemoteApiKey } : {}),
+                },
+              } : {}),
               query: {
                 hybrid: {
                   vectorWeight: coworkConfig.embeddingVectorWeight ?? 0.7,

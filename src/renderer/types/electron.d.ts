@@ -69,6 +69,8 @@ interface CoworkConfig {
   embeddingModel: string;
   embeddingLocalModelPath: string;
   embeddingVectorWeight: number;
+  embeddingRemoteBaseUrl: string;
+  embeddingRemoteApiKey: string;
   openClawSessionPolicy: OpenClawSessionPolicyConfig;
 }
 
@@ -88,6 +90,8 @@ type CoworkConfigUpdate = Partial<Pick<
   | 'embeddingModel'
   | 'embeddingLocalModelPath'
   | 'embeddingVectorWeight'
+  | 'embeddingRemoteBaseUrl'
+  | 'embeddingRemoteApiKey'
 >>;
 
 interface CoworkUserMemoryEntry {

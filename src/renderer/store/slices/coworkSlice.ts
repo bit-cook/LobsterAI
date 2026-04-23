@@ -59,6 +59,8 @@ const initialState: CoworkState = {
     embeddingModel: 'hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf',
     embeddingLocalModelPath: '',
     embeddingVectorWeight: 0.7,
+    embeddingRemoteBaseUrl: '',
+    embeddingRemoteApiKey: '',
     openClawSessionPolicy: {
       keepAlive: '30d',
     },
