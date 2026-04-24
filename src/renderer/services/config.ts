@@ -140,7 +140,7 @@ class ConfigService {
                 providerKey,
                 (() => {
                   const mergedProvider = {
-                    ...(defaultConfig.providers as Record<string, unknown>)?.[providerKey],
+                    ...((defaultConfig.providers as Record<string, unknown>)?.[providerKey] as Record<string, unknown> ?? {}),
                     ...providerConfig,
                   };
                   // Filter out removed models
