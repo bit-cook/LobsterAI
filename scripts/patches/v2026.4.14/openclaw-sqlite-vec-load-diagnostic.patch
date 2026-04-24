@@ -1,0 +1,36 @@
+diff --git a/src/memory-host-sdk/host/sqlite-vec.ts b/src/memory-host-sdk/host/sqlite-vec.ts
+index 3479403265..aad556a58a 100644
+--- a/src/memory-host-sdk/host/sqlite-vec.ts
++++ b/src/memory-host-sdk/host/sqlite-vec.ts
+@@ -7,20 +7,31 @@ export async function loadSqliteVecExtension(params: {
+   extensionPath?: string;
+ }): Promise<{ ok: boolean; extensionPath?: string; error?: string }> {
+   try {
++    // LobsterAI diagnostic: trace each step of sqlite-vec loading
++    console.error("[sqlite-vec-diag] step 1: importing sqlite-vec package");
+     const sqliteVec = await import("sqlite-vec");
+     const resolvedPath = normalizeOptionalString(params.extensionPath);
+     const extensionPath = resolvedPath ?? sqliteVec.getLoadablePath();
++    console.error(`[sqlite-vec-diag] step 2: resolved path = ${extensionPath}`);
+
++    console.error("[sqlite-vec-diag] step 3: enableLoadExtension(true)");
+     params.db.enableLoadExtension(true);
+     if (resolvedPath) {
++      console.error("[sqlite-vec-diag] step 4a: db.loadExtension (custom path)");
+       params.db.loadExtension(extensionPath);
+     } else {
++      console.error("[sqlite-vec-diag] step 4b: sqliteVec.load(db)");
+       sqliteVec.load(params.db);
+     }
+
++    console.error("[sqlite-vec-diag] step 5: loaded OK");
+     return { ok: true, extensionPath };
+   } catch (err) {
+     const message = formatErrorMessage(err);
++    console.error(`[sqlite-vec-diag] FAILED: ${message}`);
++    if (err instanceof Error && err.stack) {
++      console.error(`[sqlite-vec-diag] stack: ${err.stack.split("\n").slice(0, 4).join("\n")}`);
++    }
+     return { ok: false, error: message };
+   }
+ }

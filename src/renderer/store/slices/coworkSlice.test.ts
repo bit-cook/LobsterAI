@@ -24,7 +24,7 @@ test('setConfig preserves loaded OpenClaw session policy', () => {
     memoryUserMemoriesMaxItems: 12,
     skipMissedJobs: false,
     embeddingEnabled: false,
-    embeddingProvider: 'local',
+    embeddingProvider: 'openai',
     embeddingModel: '',
     embeddingLocalModelPath: '',
     embeddingVectorWeight: 0.7,

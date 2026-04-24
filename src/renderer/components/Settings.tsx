@@ -807,7 +807,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
   const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(coworkConfig.skipMissedJobs ?? true);
   const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(coworkConfig.embeddingEnabled ?? false);
-  const [embeddingProvider, setEmbeddingProvider] = useState<string>(coworkConfig.embeddingProvider ?? 'local');
+  const [embeddingProvider, setEmbeddingProvider] = useState<string>(coworkConfig.embeddingProvider ?? 'openai');
   const [embeddingModel, setEmbeddingModel] = useState<string>(coworkConfig.embeddingModel ?? '');
   const [embeddingLocalModelPath, setEmbeddingLocalModelPath] = useState<string>(coworkConfig.embeddingLocalModelPath ?? '');
   const [embeddingVectorWeight, setEmbeddingVectorWeight] = useState<number>(coworkConfig.embeddingVectorWeight ?? 0.7);
@@ -835,7 +835,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
     setSkipMissedJobs(coworkConfig.skipMissedJobs ?? true);
     setEmbeddingEnabled(coworkConfig.embeddingEnabled ?? false);
-    setEmbeddingProvider(coworkConfig.embeddingProvider ?? 'local');
+    setEmbeddingProvider(coworkConfig.embeddingProvider ?? 'openai');
     setEmbeddingModel(coworkConfig.embeddingModel ?? '');
     setEmbeddingLocalModelPath(coworkConfig.embeddingLocalModelPath ?? '');
     setEmbeddingVectorWeight(coworkConfig.embeddingVectorWeight ?? 0.7);
@@ -1490,7 +1490,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     || skipMissedJobs !== (coworkConfig.skipMissedJobs ?? true)
     || openClawSessionKeepAlive !== (coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays)
     || embeddingEnabled !== (coworkConfig.embeddingEnabled ?? false)
-    || embeddingProvider !== (coworkConfig.embeddingProvider ?? 'local')
+    || embeddingProvider !== (coworkConfig.embeddingProvider ?? 'openai')
     || embeddingModel !== (coworkConfig.embeddingModel ?? '')
     || embeddingLocalModelPath !== (coworkConfig.embeddingLocalModelPath ?? '')
     || embeddingVectorWeight !== (coworkConfig.embeddingVectorWeight ?? 0.7)

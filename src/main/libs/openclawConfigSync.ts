@@ -1089,11 +1089,19 @@ export class OpenClawConfigSync {
           ...(coworkConfig.embeddingEnabled ? {
             memorySearch: {
               enabled: true,
-              provider: coworkConfig.embeddingProvider || 'openai',
+              provider: (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
+                ? coworkConfig.embeddingProvider
+                : 'openai'),
               ...(coworkConfig.embeddingModel ? { model: coworkConfig.embeddingModel } : {}),
               remote: {
                 ...(coworkConfig.embeddingRemoteBaseUrl ? { baseUrl: coworkConfig.embeddingRemoteBaseUrl } : {}),
                 ...(coworkConfig.embeddingRemoteApiKey ? { apiKey: coworkConfig.embeddingRemoteApiKey } : {}),
+              },
+              store: {
+                // Use trigram tokenizer for FTS5 — unicode61 (the openclaw default)
+                // cannot tokenize CJK characters, so Chinese/Japanese/Korean memory
+                // content is invisible to keyword search.
+                fts: { tokenizer: 'trigram' },
               },
               query: {
                 hybrid: {
