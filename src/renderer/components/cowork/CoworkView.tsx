@@ -624,7 +624,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           </div>
 
           {/* Quick Actions */}
-          <div className="space-y-4">
+          <div className="max-w-3xl mx-auto w-full space-y-4">
             {selectedAction ? (
               <PromptPanel
                 action={selectedAction}
