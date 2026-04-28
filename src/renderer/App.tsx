@@ -393,7 +393,7 @@ const App: React.FC = () => {
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [showToast]);
 
   const handleShowLogin = useCallback(() => {
     showToast(i18nService.t('featureInDevelopment'));
