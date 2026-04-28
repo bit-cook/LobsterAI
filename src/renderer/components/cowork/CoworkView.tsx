@@ -2,7 +2,7 @@ import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef,useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
 
-import { agentService } from '../../services/agent';
+
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { quickActionService } from '../../services/quickAction';
@@ -17,6 +17,7 @@ import {
 import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
+import { setSelectedModel } from '../../store/slices/modelSlice';
 import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus } from '../../types/cowork';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -241,7 +242,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         updatedAt: now,
         cwd: config.workingDirectory || '',
         systemPrompt: '',
-        modelOverride: headerSelectedModel ? toOpenClawModelRef(headerSelectedModel) : '',
+        modelOverride: globalSelectedModel ? toOpenClawModelRef(globalSelectedModel) : '',
         executionMode: config.executionMode || 'local',
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
@@ -284,8 +285,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         .join('\n\n') || undefined;
 
       // Start the actual session immediately with fallback title
-      const sessionModelOverride = headerSelectedModel ? toOpenClawModelRef(headerSelectedModel) : '';
-      console.log('[CoworkView] creating session:', { modelId: headerSelectedModel?.id, providerKey: headerSelectedModel?.providerKey, isServerModel: headerSelectedModel?.isServerModel, sessionModelOverride, agentModel: currentAgent?.model });
+      const sessionModelOverride = globalSelectedModel ? toOpenClawModelRef(globalSelectedModel) : '';
+      console.log('[CoworkView] creating session:', { modelId: globalSelectedModel?.id, providerKey: globalSelectedModel?.providerKey, isServerModel: globalSelectedModel?.isServerModel, sessionModelOverride, agentModel: currentAgent?.model });
       const { session: startedSession, error: startError } = await coworkService.startSession({
         prompt,
         title: fallbackTitle,
@@ -515,11 +516,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           </div>
         )}
         <ModelSelector
-          value={isOpenClawEngine ? headerSelectedModel : undefined}
+          value={isOpenClawEngine ? globalSelectedModel : undefined}
           onChange={isOpenClawEngine
             ? async (nextModel) => {
-                if (!currentAgent || !nextModel) return;
-                await agentService.updateAgent(currentAgent.id, { model: toOpenClawModelRef(nextModel) });
+                if (!nextModel) return;
+                dispatch(setSelectedModel(nextModel));
               }
             : undefined}
         />

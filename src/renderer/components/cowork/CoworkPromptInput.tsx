@@ -14,6 +14,7 @@ import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import { addDraftAttachment, clearDraftAttachments, type DraftAttachment, setDraftAttachments, setDraftPrompt } from '../../store/slices/coworkSlice';
 import { setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
 import type { Model } from '../../store/slices/modelSlice';
+import { setSelectedModel } from '../../store/slices/modelSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { Skill } from '../../types/skill';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -939,7 +940,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               return;
                             }
                             if (!currentAgent) return;
-                            agentService.updateAgent(currentAgent.id, { model: modelRef });
+                            console.log('[CoworkPromptInput] home page model change (Redux only, no agent update):', { modelRef, modelName: nextModel.name, providerKey: nextModel.providerKey });
+                            dispatch(setSelectedModel(nextModel));
                           }
                         : undefined}
                     />

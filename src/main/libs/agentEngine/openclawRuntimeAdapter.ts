@@ -1385,6 +1385,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (currentModel && currentModel !== this.lastPatchedModelBySession.get(sessionId)) {
       try {
         const client = this.requireGatewayClient();
+        console.log('[OpenClawRuntime] patching session model:', { sessionId, sessionKey, model: currentModel, source: session.modelOverride ? 'sessionOverride' : 'agentModel' });
         await client.request('sessions.patch', { key: sessionKey, model: currentModel });
         this.lastPatchedModelBySession.set(sessionId, currentModel);
       } catch (error) {
