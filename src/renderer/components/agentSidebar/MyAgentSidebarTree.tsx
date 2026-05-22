@@ -47,6 +47,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
   );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const { subagentsBySessionId } = useSubagentSessions(currentSessionId, currentSessionStatus);
   const {
     agentNodes,
@@ -62,6 +63,16 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
 
   useEffect(() => {
     void agentService.loadAgents();
+  }, []);
+
+  // Listen for subagent selection events to track active subagent in sidebar
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
+      setSelectedSubagentId(detail?.id ?? null);
+    };
+    window.addEventListener(CoworkUiEvent.SelectSubagent, handler);
+    return () => window.removeEventListener(CoworkUiEvent.SelectSubagent, handler);
   }, []);
 
   const handleSelectTask = async (task: AgentSidebarTaskNode) => {
@@ -160,6 +171,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       selectedIds={selectedIds}
       showBatchOption
       subagentsBySessionId={subagentsBySessionId}
+      selectedSubagentId={selectedSubagentId}
       onSelectSubagent={(sub) => {
         onSelectSubagent?.(sub);
         onShowCowork();
