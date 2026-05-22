@@ -10,6 +10,33 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 };
 
+/**
+ * Resolve tool input from a tool_use block, handling multiple field names and formats.
+ * The gateway can return tool arguments as:
+ *  - `input` (Anthropic format, object)
+ *  - `args` (OpenClaw format, object)
+ *  - `arguments` (OpenAI format, may be a JSON string)
+ */
+const resolveToolInput = (block: Record<string, unknown>): Record<string, unknown> => {
+  if (isRecord(block.input)) return block.input;
+  if (isRecord(block.args)) return block.args;
+  if (isRecord(block.arguments)) return block.arguments;
+  // arguments may be a JSON string (OpenAI format)
+  if (typeof block.arguments === 'string') {
+    try {
+      const parsed = JSON.parse(block.arguments);
+      if (isRecord(parsed)) return parsed;
+    } catch { /* ignore parse errors */ }
+  }
+  if (typeof block.input === 'string') {
+    try {
+      const parsed = JSON.parse(block.input);
+      if (isRecord(parsed)) return parsed;
+    } catch { /* ignore parse errors */ }
+  }
+  return {};
+};
+
 /** Message format compatible with renderer CoworkMessage interface */
 export interface SubagentCoworkMessage {
   id: string;
@@ -353,7 +380,7 @@ export class SubagentTracker {
               const blockType = typeof block.type === 'string' ? block.type : '';
               if (blockType === 'tool_use' || blockType === 'tool_call' || blockType === 'toolCall') {
                 const toolName = typeof block.name === 'string' ? block.name : 'tool';
-                const toolInput = isRecord(block.input) ? block.input as Record<string, unknown> : {};
+                const toolInput = resolveToolInput(block);
                 const toolUseId = typeof block.id === 'string' ? block.id : null;
                 messages.push({
                   id: crypto.randomUUID(),
@@ -363,6 +390,42 @@ export class SubagentTracker {
                   metadata: { toolName, toolInput, toolUseId },
                 });
               }
+            }
+          } else if (role === 'user' && Array.isArray(raw.content)) {
+            // User messages may contain tool_result blocks (Anthropic API format)
+            let hasToolResult = false;
+            for (const block of raw.content as unknown[]) {
+              if (!isRecord(block)) continue;
+              const blockType = typeof block.type === 'string' ? block.type : '';
+              if (blockType === 'tool_result') {
+                hasToolResult = true;
+                const resultText = typeof block.content === 'string'
+                  ? block.content
+                  : extractGatewayMessageText(block).trim();
+                const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : null;
+                const isError = block.is_error === true;
+                if (resultText) {
+                  messages.push({
+                    id: crypto.randomUUID(),
+                    type: 'tool_result',
+                    content: resultText,
+                    timestamp: ts++,
+                    metadata: { toolResult: resultText, toolUseId, isError: isError || undefined },
+                  });
+                }
+              }
+            }
+            // If there was also text content alongside tool results, emit it
+            if (text && !shouldSuppressHeartbeatText('user', text)) {
+              messages.push({
+                id: crypto.randomUUID(),
+                type: 'user',
+                content: text,
+                timestamp: ts++,
+              });
+            }
+            if (!hasToolResult && !text) {
+              console.log('[SubagentTracker] dropped user message with empty text, keys:', Object.keys(raw).join(','));
             }
           } else if (text && !shouldSuppressHeartbeatText(role as 'user' | 'assistant' | 'system', text)) {
             const type = role === 'system' ? 'system' : role as 'user' | 'assistant';
@@ -407,7 +470,7 @@ export class SubagentTracker {
             const blockType = typeof block.type === 'string' ? block.type : '';
             if (blockType === 'tool_use' || blockType === 'tool_call' || blockType === 'toolCall') {
               const toolName = typeof block.name === 'string' ? block.name : 'tool';
-              const toolInput = isRecord(block.input) ? block.input as Record<string, unknown> : {};
+              const toolInput = resolveToolInput(block);
               const toolUseId = typeof block.id === 'string' ? block.id : null;
               messages.push({
                 id: crypto.randomUUID(),
