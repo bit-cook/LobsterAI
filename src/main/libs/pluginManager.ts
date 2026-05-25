@@ -589,8 +589,6 @@ export class PluginManager {
     const hiddenIds = getHiddenPluginIds();
     const existingPlugins = this.store.listUserPlugins();
     const existingIds = new Set(existingPlugins.map(p => p.pluginId));
-    console.log('[PluginManager.detect] existingIds:', [...existingIds]);
-    console.log('[PluginManager.detect] hiddenIds:', [...hiddenIds]);
 
     const discovered = new Set<string>();
 
@@ -599,28 +597,19 @@ export class PluginManager {
       getExtensionsDir(),
       getOpenClawStateExtensionsDir(),
     ].filter((d): d is string => d !== null);
-    console.log('[PluginManager.detect] dirsToScan:', dirsToScan);
 
     for (const dir of dirsToScan) {
       try {
         const entries = fs.readdirSync(dir, { withFileTypes: true })
           .filter(e => e.isDirectory());
-        console.log(`[PluginManager.detect] directories in ${dir}:`, entries.map(e => e.name));
 
         for (const entry of entries) {
           const pluginDir = path.join(dir, entry.name);
           const manifest = readPluginManifest(pluginDir);
           const pluginId = manifest?.id || entry.name;
 
-          if (existingIds.has(pluginId)) {
-            console.log(`[PluginManager.detect] skip (already exists): ${pluginId}`);
-            continue;
-          }
-          if (isHiddenPlugin(pluginId, hiddenIds)) {
-            console.log(`[PluginManager.detect] skip (hidden): ${pluginId}`);
-            continue;
-          }
-          console.log(`[PluginManager.detect] discovered from disk: ${pluginId}`);
+          if (existingIds.has(pluginId)) continue;
+          if (isHiddenPlugin(pluginId, hiddenIds)) continue;
           discovered.add(pluginId);
         }
       } catch (err) {
@@ -635,13 +624,10 @@ export class PluginManager {
       if (existingIds.has(pluginId)) continue;
       if (isHiddenPlugin(pluginId, hiddenIds)) continue;
       if (discovered.has(pluginId)) continue;
-      console.log(`[PluginManager.detect] discovered from config: ${pluginId}`);
       discovered.add(pluginId);
     }
 
-    const plugins = [...discovered];
-    console.log('[PluginManager.detect] final result:', plugins);
-    return { plugins };
+    return { plugins: [...discovered] };
   }
 
   /**

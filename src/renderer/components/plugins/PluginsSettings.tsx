@@ -56,7 +56,6 @@ export default function PluginsSettings() {
     setSyncing(true);
     try {
       const result = await window.electron?.plugins.sync();
-      console.log('[PluginsSettings] sync result:', result);
       if (result && result.synced.length > 0) {
         await loadPlugins();
       }
@@ -71,14 +70,12 @@ export default function PluginsSettings() {
     setDiscoverResult(null);
     try {
       const detectResult = await window.electron?.plugins.detect();
-      console.log('[PluginsSettings] discover detect result:', detectResult);
       if (detectResult && detectResult.plugins.length > 0) {
         setDiscoverResult(detectResult.plugins);
       } else {
         setDiscoverResult([]);
       }
-    } catch (err) {
-      console.error('[PluginsSettings] discover error:', err);
+    } catch {
       setDiscoverResult([]);
     } finally {
       setSyncing(false);
@@ -90,7 +87,6 @@ export default function PluginsSettings() {
     const init = async () => {
       await loadPlugins();
       const detectResult = await window.electron?.plugins.detect();
-      console.log('[PluginsSettings] auto-detect on mount:', detectResult);
       if (detectResult && detectResult.plugins.length > 0) {
         setDetectedPlugins(detectResult.plugins);
       }
