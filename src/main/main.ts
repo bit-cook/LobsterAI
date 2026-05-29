@@ -164,7 +164,7 @@ import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyf
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer, type MediaGenerationRequest, type MediaGenerationResponse } from './libs/mcpBridgeServer';
 import { type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
-import { parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
+import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
@@ -202,6 +202,7 @@ import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { resolveStdioCommand } from './libs/resolveStdioCommand';
 import { serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
+import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -715,59 +716,6 @@ const normalizeOpenClawModelRef = (modelRef: string): string => {
   });
 
   return qualification.status === 'qualified' ? qualification.primaryModel : normalized;
-};
-
-// Provider IDs that were renamed in past refactors. Any stored agent model ref
-// using an old ID is rewritten to the current ID on startup.
-const RENAMED_PROVIDER_IDS: Record<string, string> = {
-  'github-copilot': 'lobsterai-copilot',
-};
-
-const migrateAgentModelRefs = (precomputedDefaultModelRef?: string): number => {
-  const defaultModelRef = precomputedDefaultModelRef ?? resolveDefaultAgentModelRef();
-  if (!defaultModelRef) return 0;
-
-  const availableProviders = buildAvailableOpenClawProviders();
-  const agents = getAgentManager().listAgents();
-  let changed = 0;
-
-  for (const agent of agents) {
-    let normalizedModel = agent.model.trim();
-    if (!normalizedModel) continue;
-
-    // Apply explicit provider rename map before qualification so that renamed
-    // provider IDs (e.g. 'github-copilot' → 'lobsterai-copilot') are corrected
-    // even though resolveQualifiedAgentModelRef treats any slash-ref as valid.
-    const slashIdx = normalizedModel.indexOf('/');
-    if (slashIdx > 0) {
-      const storedProviderId = normalizedModel.slice(0, slashIdx);
-      const renamedId = RENAMED_PROVIDER_IDS[storedProviderId];
-      if (renamedId) {
-        normalizedModel = `${renamedId}${normalizedModel.slice(slashIdx)}`;
-      }
-    }
-
-    const qualification = resolveQualifiedAgentModelRef({
-      agentModel: normalizedModel,
-      availableProviders,
-    });
-
-    if (qualification.status === 'ambiguous') {
-      console.warn(
-        `[Main] Skipped ambiguous agent model migration for "${agent.id}" because "${qualification.modelId}" matches multiple providers: ${qualification.providerIds.join(', ')}`,
-      );
-      continue;
-    }
-
-    if (qualification.status !== 'qualified' || qualification.primaryModel === agent.model.trim()) {
-      continue;
-    }
-
-    getCoworkStore().updateAgent(agent.id, { model: qualification.primaryModel });
-    changed += 1;
-  }
-
-  return changed;
 };
 
 const sanitizeAttachmentFileName = (value?: string): string => {
@@ -9076,52 +9024,17 @@ end tell'`,
 
     // ── Pre-warm quota & model caches so provider resolution and config sync
     // see real server data instead of empty defaults ──
-    // Without this, cachedSubscriptionStatus starts as 'free' and serverModelMetadataCache
-    // is empty. resolveMatchedProvider then falls back to tryLobsteraiServerFallback
-    // for every call, and the renderer's subsequent auth responses trigger redundant
-    // syncOpenClawConfig calls during the gateway startup window.
     if (getAuthTokens()) {
       profiler.mark('startupCacheWarmup');
-      const serverBaseUrl = getServerApiBaseUrl();
-      const warmupTimeout = 5000;
-      await Promise.allSettled([
-        (async () => {
-          try {
-            const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`, {
-              signal: AbortSignal.timeout(warmupTimeout),
-            });
-            if (!resp.ok) return;
-            const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-            if (body.code !== 0 || !body.data) return;
-            const quota = normalizeAuthQuota(body.data, {
-              freePlanName: t('authPlanFree'),
-              standardPlanName: t('authPlanStandard'),
-              fallbackSubscriptionStatus: cachedSubscriptionStatus,
-            });
-            const gateState = authQuotaGateStateFromQuota(quota);
-            cachedSubscriptionStatus = gateState.subscriptionStatus;
-            cachedMediaGenerationEntitled = gateState.mediaGenerationEntitled;
-            console.log(`[Main] startup cache warmup: subscription=${gateState.subscriptionStatus}, mediaEntitled=${gateState.mediaGenerationEntitled}`);
-          } catch (err) {
-            console.debug('[Main] startup cache warmup: quota fetch failed (non-fatal):', err);
-          }
-        })(),
-        (async () => {
-          try {
-            const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-            const resp = await fetchWithAuth(url, {
-              signal: AbortSignal.timeout(warmupTimeout),
-            });
-            if (!resp.ok) return;
-            const data = (await resp.json()) as { code: number; data: Array<{ modelId: string; supportsImage?: boolean; supportsThinking?: boolean; contextWindow?: number }> };
-            if (data.code !== 0 || !data.data) return;
-            updateServerModelMetadata(data.data);
-            console.log(`[Main] startup cache warmup: loaded ${data.data.length} server models`);
-          } catch (err) {
-            console.debug('[Main] startup cache warmup: models fetch failed (non-fatal):', err);
-          }
-        })(),
-      ]);
+      const warmupResult = await runStartupCacheWarmup({
+        serverBaseUrl: getServerApiBaseUrl(),
+        fetchWithAuth,
+        appendKeyfromQuery,
+        cachedSubscriptionStatus,
+        t,
+      });
+      cachedSubscriptionStatus = warmupResult.subscriptionStatus;
+      cachedMediaGenerationEntitled = warmupResult.mediaGenerationEntitled;
       profiler.measure('startupCacheWarmup');
     }
 
@@ -9129,7 +9042,12 @@ end tell'`,
     // can match lobsterai-server models without falling back.
     const defaultAgentModelRef = resolveDefaultAgentModelRef();
     const backfilledAgentModels = getCoworkStore().backfillEmptyAgentModels(defaultAgentModelRef);
-    const qualifiedAgentModels = migrateAgentModelRefs(defaultAgentModelRef);
+    const qualifiedAgentModels = migrateAgentModelRefs({
+      defaultModelRef: defaultAgentModelRef,
+      availableProviders: buildAvailableOpenClawProviders(),
+      agents: getAgentManager().listAgents(),
+      updateAgent: (id, patch) => getCoworkStore().updateAgent(id, patch),
+    });
     if (backfilledAgentModels > 0 || qualifiedAgentModels > 0) {
       console.log(
         `[Main] migrated agent model bindings: backfilled=${backfilledAgentModels}, qualified=${qualifiedAgentModels}`,

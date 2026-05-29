@@ -1468,7 +1468,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       && bindingsJson !== this.previousBindingsJson;
     this.previousBindingsJson = bindingsJson;
 
-    const canUseMediaGeneration = this.canUseMediaGeneration();
+    this.canUseMediaGeneration();
 
     const managedConfig: Record<string, unknown> = {
       gateway: {
