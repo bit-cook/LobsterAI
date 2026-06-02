@@ -264,6 +264,25 @@ interface McpServerConfigIPC {
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
+  launchResolution?: {
+    serverId: string;
+    resolverKind: 'npx' | 'uvx' | 'python' | 'raw';
+    sourceFingerprint: string;
+    status: 'pending' | 'installing' | 'ready' | 'failed' | 'unsupported';
+    packageName?: string;
+    requestedVersion?: string;
+    resolvedVersion?: string;
+    installDir?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    error?: string;
+    installedAt?: number;
+    resolvedAt?: number;
+    lastProbeAt?: number;
+    lastProbeStatus?: string;
+    updatedAt: number;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -401,11 +420,15 @@ interface IElectronAPI {
       id: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    retryLaunchResolution: (
+      id: string,
+    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     fetchMarketplace: () => Promise<{
       success: boolean;
       data?: McpMarketplaceData;
       error?: string;
     }>;
+    onChanged: (callback: () => void) => () => void;
   };
   kits: {
     fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;

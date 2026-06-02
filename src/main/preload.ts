@@ -19,6 +19,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { McpIpcChannel } from '../shared/mcp/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -61,13 +62,19 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   mcp: {
-    list: () => ipcRenderer.invoke('mcp:list'),
-    create: (data: any) => ipcRenderer.invoke('mcp:create', data),
-    update: (id: string, data: any) => ipcRenderer.invoke('mcp:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
+    list: () => ipcRenderer.invoke(McpIpcChannel.List),
+    create: (data: any) => ipcRenderer.invoke(McpIpcChannel.Create, data),
+    update: (id: string, data: any) => ipcRenderer.invoke(McpIpcChannel.Update, id, data),
+    delete: (id: string) => ipcRenderer.invoke(McpIpcChannel.Delete, id),
     setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke('mcp:setEnabled', options),
-    fetchMarketplace: () => ipcRenderer.invoke('mcp:fetchMarketplace'),
+      ipcRenderer.invoke(McpIpcChannel.SetEnabled, options),
+    retryLaunchResolution: (id: string) => ipcRenderer.invoke(McpIpcChannel.RetryLaunchResolution, id),
+    fetchMarketplace: () => ipcRenderer.invoke(McpIpcChannel.FetchMarketplace),
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(McpIpcChannel.Changed, handler);
+      return () => ipcRenderer.removeListener(McpIpcChannel.Changed, handler);
+    },
   },
   kits: {
     fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
