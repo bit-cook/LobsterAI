@@ -7,12 +7,14 @@ import XMarkIcon from '../icons/XMarkIcon';
 
 interface SelectedTextSnippetBadgeProps {
   snippets: CoworkSelectedTextSnippet[];
+  align?: 'left' | 'right';
   onRemove?: (snippetId: string) => void;
   onLocate?: (sourceMessageId: string) => void;
 }
 
 const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
   snippets,
+  align = 'left',
   onRemove,
   onLocate,
 }) => {
@@ -31,6 +33,7 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
   }, [expanded]);
 
   if (snippets.length === 0) return null;
+  const popoverAlignmentClass = align === 'right' ? 'right-0' : 'left-0';
 
   return (
     <div ref={rootRef} className="relative inline-flex max-w-full">
@@ -43,7 +46,7 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
         <span>{i18nService.t('coworkSelectedTextSnippetCount').replace('{count}', String(snippets.length))}</span>
       </button>
       {expanded && (
-        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-[min(360px,calc(100vw-32px))] rounded-xl border border-border bg-surface p-2 shadow-popover">
+        <div className={`absolute bottom-full ${popoverAlignmentClass} z-50 mb-1.5 w-80 max-w-[calc(100vw-48px)] rounded-xl border border-border bg-surface p-2 shadow-popover`}>
           <div className="max-h-56 space-y-1 overflow-y-auto">
             {snippets.map(snippet => (
               <div key={snippet.id} className="flex items-start gap-1 rounded-lg bg-surface-raised px-2 py-1.5 text-xs text-secondary">

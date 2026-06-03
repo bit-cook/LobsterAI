@@ -220,7 +220,11 @@ const UserMessageItem: React.FC<{
               <div className="w-fit max-w-full rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
                 {selectedTextSnippets.length > 0 && (
                   <div className={(displayContent?.trim() || imageAttachments.length > 0 || hasCapabilityBadges) ? 'mb-2' : ''}>
-                    <SelectedTextSnippetBadge snippets={selectedTextSnippets} onLocate={onLocateSelectedText} />
+                    <SelectedTextSnippetBadge
+                      snippets={selectedTextSnippets}
+                      align="right"
+                      onLocate={onLocateSelectedText}
+                    />
                   </div>
                 )}
                 {hasCapabilityBadges && (

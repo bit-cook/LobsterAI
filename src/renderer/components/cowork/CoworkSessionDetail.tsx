@@ -84,6 +84,13 @@ const ARTIFACT_PANEL_RESIZE_HANDLE_WIDTH = 4;
 const COWORK_DETAIL_MIN_WIDTH = 480;
 const ARTIFACT_PANEL_MIN_WIDTH_RATIO = 1 / 6;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
+const SELECTED_TEXT_ACTION_HALF_WIDTH = 72;
+const SELECTED_TEXT_ACTION_SUPPRESS_MS = 250;
+type SelectedAssistantTextRange = {
+  text: string;
+  sourceMessageId: string;
+  rect: DOMRect;
+};
 const SELECTED_TEXT_ERROR_I18N_KEYS: Record<CoworkSelectedTextValidationError, string> = {
   empty: 'coworkSelectedTextInvalid',
   invalid: 'coworkSelectedTextInvalid',
@@ -106,6 +113,48 @@ const formatExportTimestamp = (value: Date): string => {
 const logDetailDiagnostic = (message: string): void => {
   console.log(`[CoworkSessionDetail] ${message}`);
   window.electron?.log?.fromRenderer?.('info', 'CoworkSessionDetail', message);
+};
+
+const getSelectedAssistantTextRange = (): SelectedAssistantTextRange | null => {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  const startElement = range.startContainer.parentElement;
+  const endElement = range.endContainer.parentElement;
+  const startMessage = startElement?.closest<HTMLElement>('[data-cowork-assistant-message-id]');
+  const endMessage = endElement?.closest<HTMLElement>('[data-cowork-assistant-message-id]');
+  const sourceMessageId = startMessage?.dataset.coworkAssistantMessageId;
+  const text = selection.toString().trim();
+  if (!sourceMessageId || startMessage !== endMessage || !text) {
+    return null;
+  }
+  return {
+    text,
+    sourceMessageId,
+    rect: range.getBoundingClientRect(),
+  };
+};
+
+const getSelectedTextActionLeft = (rect: DOMRect, container: HTMLDivElement): number => {
+  const containerRect = container.getBoundingClientRect();
+  const selectionCenterX = rect.left - containerRect.left + rect.width / 2;
+  return Math.min(
+    container.clientWidth - SELECTED_TEXT_ACTION_HALF_WIDTH,
+    Math.max(SELECTED_TEXT_ACTION_HALF_WIDTH, selectionCenterX),
+  );
+};
+
+const getSelectedTextActionTop = (
+  rect: DOMRect,
+  container: HTMLDivElement,
+): number => {
+  const containerRect = container.getBoundingClientRect();
+  const rawTop = container.scrollTop + rect.top - containerRect.top - 42;
+  const minTop = container.scrollTop + 8;
+  const maxTop = container.scrollTop + container.clientHeight - 48;
+  return Math.min(maxTop, Math.max(minTop, rawTop));
 };
 
 type CaptureRect = { x: number; y: number; width: number; height: number };
@@ -558,6 +607,43 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   } | null>(null);
   const isLoadingMoreMessagesRef = useRef(false);
   const prevScrollHeightRef = useRef<number | null>(null);
+  const suppressSelectedTextActionUntilRef = useRef(0);
+
+  const closeSelectedTextAction = useCallback((options: {
+    clearSelection?: boolean;
+    suppressNextMouseUp?: boolean;
+  } = {}) => {
+    if (options.suppressNextMouseUp) {
+      suppressSelectedTextActionUntilRef.current = Date.now() + SELECTED_TEXT_ACTION_SUPPRESS_MS;
+    }
+    if (options.clearSelection) {
+      window.getSelection()?.removeAllRanges();
+    }
+    setSelectedTextAction(null);
+  }, []);
+
+  const syncSelectedTextActionPosition = useCallback((options: {
+    closeWhenMissing?: boolean;
+  } = {}) => {
+    const selectedRange = getSelectedAssistantTextRange();
+    if (!selectedRange) {
+      if (options.closeWhenMissing) {
+        closeSelectedTextAction();
+      }
+      return;
+    }
+    const container = scrollContainerRef.current;
+    if (!container) {
+      closeSelectedTextAction();
+      return;
+    }
+    setSelectedTextAction({
+      text: selectedRange.text,
+      sourceMessageId: selectedRange.sourceMessageId,
+      left: getSelectedTextActionLeft(selectedRange.rect, container),
+      top: getSelectedTextActionTop(selectedRange.rect, container),
+    });
+  }, [closeSelectedTextAction]);
 
   // Clear lazy-render height cache when session changes
   const sessionId = currentSession?.id;
@@ -567,7 +653,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   useEffect(() => {
     setShowCompactConfirm(false);
-  }, [sessionId]);
+    closeSelectedTextAction({ clearSelection: true });
+  }, [closeSelectedTextAction, sessionId]);
 
   useEffect(() => {
     if (!selectedTextAction) return undefined;
@@ -576,11 +663,20 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       if (target instanceof Element && target.closest('[data-cowork-selected-text-action]')) {
         return;
       }
-      setSelectedTextAction(null);
+      closeSelectedTextAction({ clearSelection: true, suppressNextMouseUp: true });
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeSelectedTextAction({ clearSelection: true });
+      }
     };
     document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [selectedTextAction]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeSelectedTextAction, selectedTextAction]);
 
   useEffect(() => {
     if (!showCompactConfirm) return undefined;
@@ -687,30 +783,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const handleAssistantTextSelection = useCallback(() => {
     if (remoteManaged) return;
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-      setSelectedTextAction(null);
+    if (Date.now() < suppressSelectedTextActionUntilRef.current) {
       return;
     }
-    const range = selection.getRangeAt(0);
-    const startElement = range.startContainer.parentElement;
-    const endElement = range.endContainer.parentElement;
-    const startMessage = startElement?.closest<HTMLElement>('[data-cowork-assistant-message-id]');
-    const endMessage = endElement?.closest<HTMLElement>('[data-cowork-assistant-message-id]');
-    const sourceMessageId = startMessage?.dataset.coworkAssistantMessageId;
-    const text = selection.toString().trim();
-    if (!sourceMessageId || startMessage !== endMessage || !text) {
-      setSelectedTextAction(null);
-      return;
-    }
-    const rect = range.getBoundingClientRect();
-    setSelectedTextAction({
-      text,
-      sourceMessageId,
-      left: Math.min(window.innerWidth - 140, Math.max(8, rect.left)),
-      top: Math.max(8, rect.top - 42),
-    });
-  }, [remoteManaged]);
+    suppressSelectedTextActionUntilRef.current = 0;
+    syncSelectedTextActionPosition({ closeWhenMissing: true });
+  }, [remoteManaged, syncSelectedTextActionPosition]);
 
   const handleAddSelectedText = useCallback(() => {
     if (!currentSession?.id || !selectedTextAction) return;
@@ -733,10 +811,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       `added a selected text excerpt to the draft for session ${currentSession.id}; `
       + `${result.snippets.length} excerpts now contain ${result.snippets.reduce((total, item) => total + item.text.length, 0)} characters`,
     );
-    window.getSelection()?.removeAllRanges();
-    setSelectedTextAction(null);
+    closeSelectedTextAction({ clearSelection: true });
     promptInputRef.current?.focus();
-  }, [currentSession?.id, dispatch, selectedDraftSnippets, selectedTextAction]);
+  }, [closeSelectedTextAction, currentSession?.id, dispatch, selectedDraftSnippets, selectedTextAction]);
 
   const handleLocateSelectedText = useCallback((sourceMessageId: string) => {
     const container = scrollContainerRef.current;
@@ -1850,7 +1927,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const handleMessagesScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    setSelectedTextAction(null);
     const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const isNearBottom = distanceToBottom <= AUTO_SCROLL_THRESHOLD;
     setShouldAutoScroll((prev) => (prev === isNearBottom ? prev : isNearBottom));
@@ -2231,18 +2307,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
-      {selectedTextAction && createPortal(
-        <button
-          type="button"
-          data-cowork-selected-text-action
-          onClick={handleAddSelectedText}
-          className="fixed z-[100] rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-popover transition-colors hover:bg-surface-raised"
-          style={{ left: selectedTextAction.left, top: selectedTextAction.top }}
-        >
-          {i18nService.t('coworkSelectedTextAddToChat')}
-        </button>,
-        document.body
-      )}
       {/* Header — spans full width */}
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border bg-background shrink-0">
         {/* Left side: Toggle buttons (when collapsed) + Title */}
@@ -2556,9 +2620,20 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}
           onMouseUp={handleAssistantTextSelection}
-          className="h-full min-h-0 overflow-y-auto pt-3"
+          className="relative h-full min-h-0 overflow-y-auto pt-3"
           style={{ scrollbarGutter: 'stable both-edges' }}
         >
+          {selectedTextAction && (
+            <button
+              type="button"
+              data-cowork-selected-text-action
+              onClick={handleAddSelectedText}
+              className="absolute z-40 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-popover transition-colors hover:bg-surface-raised"
+              style={{ left: selectedTextAction.left, top: selectedTextAction.top }}
+            >
+              {i18nService.t('coworkSelectedTextAddToChat')}
+            </button>
+          )}
           {isLoadingMoreMessages && (
             <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
               {i18nService.t('loading')}

@@ -323,16 +323,7 @@ export const COWORK_SELECTED_TEXT_MAX_TOTAL_CHARS = 12_000;
   - zh: `添加到对话`
   - en: `Add to chat`
 
-建议新增独立组件：
-
-```tsx
-<SelectedTextActionPopover
-  selection={selection}
-  onAdd={handleAddSelectedText}
-/>
-```
-
-第一版只在 `AssistantMessageItem` 中接入，不在通用 `MarkdownContent` 内全局接入，避免 artifact 和其他 Markdown 使用方意外获得该交互。
+第一版不在通用 `MarkdownContent` 内全局接入，避免 artifact 和其他 Markdown 使用方意外获得该交互。
 
 组件透传边界：
 
@@ -343,6 +334,20 @@ CoworkSessionDetail
 ```
 
 只有主 Cowork 会话详情传入 `onAddSelectedText`。复用 `ConversationTurnsView` 的 subagent 只读详情不传该 callback，不开放添加入口。
+
+浮层定位与关闭规则：
+
+- 会话详情中只维护一个“添加到对话”浮层实例。
+- `AssistantMessageItem` 在 assistant 消息根节点标记 `data-cowork-assistant-message-id`。
+- `CoworkSessionDetail` 在消息滚动容器集中处理 `mouseup`，读取 `window.getSelection()`。
+- 只有选区起点和终点都位于同一个 assistant message 容器内时，才记录待添加状态。
+- 待添加状态只保存文本快照、`sourceMessageId` 和相对消息滚动内容的坐标，不保存 DOM `Range`。
+- 浮层作为消息滚动容器内部的 `absolute` 元素渲染，不通过 `document.body` portal 渲染。
+- 水平方向以选区 `Range.getBoundingClientRect()` 的中心点为基准，并限制在滚动容器可视宽度内。
+- 垂直方向以选区矩形上方为基准，换算为 `scrollTop + rect.top - containerRect.top - 42`，并限制在当前滚动容器可视区域内。
+- 消息区滚动时不关闭、不清空 Selection、不重新计算位置；浮层随滚动内容自然移动，保持相对选中文本的位置稳定。
+- 点击浮层外部、按 Escape、点击“添加到对话”、切换会话或消息卸载时关闭浮层并清理 Selection。
+- 外部点击关闭后需要短暂抑制同一次点击的 `mouseup` 重新打开浮层。
 
 ### FR-4: 草稿状态
 
@@ -685,7 +690,8 @@ cowork_messages.metadata TEXT
 - 页面中最多只维护一个待确认 Selection 浮层。
 - 不要为每条 assistant message 注册常驻 `document.selectionchange`、`scroll` 或 `resize` 监听器。
 - 优先在会话详情容器集中处理 selection，或确保全局监听器只有一份且在卸载时清理。
-- 浮层临时状态只保存文本快照、来源 id 和矩形位置，不把 DOM `Range` 放进 Redux。
+- 浮层临时状态只保存文本快照、来源 id 和滚动内容坐标，不把 DOM `Range` 放进 Redux。
+- 浮层展示期间只保留必要的外部点击和 Escape 监听；消息滚动不触发关闭或重定位逻辑。
 - Redux 草稿片段按 session 隔离，每个 session 最多 `8` 个、合计最多 `12_000` 字符。
 - 删除 session 时清理对应草稿片段。
 - 发送成功后立即清理对应草稿片段。
@@ -699,9 +705,12 @@ cowork_messages.metadata TEXT
 实现要求：
 
 - 使用 `window.getSelection()` 和 `Range.getBoundingClientRect()`。
-- 浮层建议通过 portal 渲染到 `document.body`，避免被 Markdown 容器裁剪。
-- 浮层位置需要限制在 viewport 内，兼容 Windows 缩放比例和 Electron zoom。
-- 页面滚动、窗口 resize、消息卸载、点击外部区域时关闭浮层。
+- 浮层渲染在消息滚动容器内部，消息滚动容器负责建立相对定位上下文。
+- 浮层坐标从 viewport 矩形换算为滚动内容坐标，避免 `position: fixed` 覆盖会话标题栏或侧边栏。
+- 浮层位置限制在消息滚动容器的可视区域内，兼容 Windows 缩放比例和 Electron zoom。
+- 消息区滚动时浮层不关闭、不抖动、不重新读取 Selection rect，而是随滚动内容自然移动。
+- 窗口 resize 后不能让浮层越过消息区边界；可以关闭浮层或按同一坐标模型重新定位。
+- 消息卸载、点击外部区域或 Escape 时关闭浮层。
 - 不依赖 macOS 专有快捷键。
 - 鼠标选择在 macOS 和 Windows 都必须验证。
 - 触控板拖选、代码块选择、中文和英文混排需要验证。
@@ -796,27 +805,31 @@ export const buildSelectedTextPromptSection = (
 
 涉及文件：
 
+- `src/renderer/components/cowork/CoworkSessionDetail.tsx`
 - `src/renderer/components/cowork/AssistantMessageItem.tsx`
-- 可新增 `src/renderer/components/cowork/SelectedTextActionPopover.tsx`
 
 建议流程：
 
-1. 用户在 assistant 正文中触发 `mouseup`。
+1. 用户在消息滚动容器内触发 `mouseup`。
 2. 使用 `window.getSelection()` 读取当前选区。
 3. 校验 `selection.rangeCount > 0`。
 4. 校验选区文本 trim 后非空。
-5. 校验 range 的 common ancestor 位于当前 assistant message 容器内。
-6. 记录片段文本快照与浮层位置。
-7. 点击浮层后生成 snippet id，并通过 callback 添加到当前 draft。
-8. 添加成功后清理当前 Selection，聚焦输入框。
+5. 校验 range 起点和终点都位于同一个带 `data-cowork-assistant-message-id` 的 assistant message 容器内。
+6. 使用 `range.getBoundingClientRect()` 获取选区矩形，并换算为消息滚动容器内的内容坐标。
+7. 记录片段文本快照、来源消息 id 与浮层内容坐标。
+8. 在消息滚动容器内部渲染单个 absolute 浮层按钮。
+9. 点击浮层后生成 snippet id，并通过 callback 添加到当前 draft。
+10. 添加成功后清理当前 Selection，关闭浮层并聚焦输入框。
 
 注意：
 
-- 浮层定位应使用 `range.getBoundingClientRect()`。
-- 滚动、resize、消息卸载或点击外部区域时关闭浮层。
+- 浮层定位使用 `range.getBoundingClientRect()`，但最终保存的是滚动内容坐标。
+- 消息区滚动时不关闭浮层，也不重新计算坐标；浮层应随内容滚动并保持相对选中文本的位置。
+- 点击外部区域、Escape、消息卸载或切换会话时关闭浮层。
+- 外部点击关闭后需要短暂抑制同一次点击产生的新 `mouseup`，避免用户需要点击两次空白处。
 - 不把 Selection state 放进 Redux，只把确认添加后的 snippet 放进 Redux。
 - Selection 事件处理限制在消息正文区域，不影响底部复制、分叉等按钮。
-- 会话详情中只渲染一个浮层实例；不要为每条 assistant message 持有一个 portal 和一组全局监听器。
+- 会话详情中只渲染一个浮层实例；不要为每条 assistant message 持有一组全局监听器。
 
 ### 5.3 Renderer: draft 管理
 
@@ -1068,7 +1081,6 @@ CoworkStore.getSession()
 | 文件 | 说明 |
 |------|------|
 | `src/shared/cowork/selectedText.ts` | 共享类型、限制常量、校验和 OpenClaw prompt 序列化 |
-| `src/renderer/components/cowork/SelectedTextActionPopover.tsx` | assistant 选区附近的“添加到对话”浮层 |
 | `src/renderer/components/cowork/SelectedTextSnippetBadge.tsx` | 草稿与历史消息复用的片段数量、预览和删除 UI |
 
 ### 8.2 修改文件
@@ -1200,9 +1212,14 @@ npm run electron:dev:openclaw
 | 普通段落鼠标拖选 | 必测 | 必测 |
 | 代码块鼠标拖选 | 必测 | 必测 |
 | 中文、英文和混排文本 | 必测 | 必测 |
-| 页面滚动后浮层关闭 | 必测 | 必测 |
-| 窗口 resize 后浮层关闭 | 必测 | 必测 |
-| Electron zoom / Windows DPI 缩放下浮层不出 viewport | 建议 | 必测 |
+| 选中文本后浮层相对选区水平居中 | 必测 | 必测 |
+| 消息区滚动时浮层相对选中文本位置稳定、不抖动 | 必测 | 必测 |
+| 消息区滚动时浮层不覆盖会话标题栏或侧边栏 | 必测 | 必测 |
+| 跨屏长文本拖选触发滚动后仍能展示浮层 | 必测 | 必测 |
+| 点击空白处一次关闭浮层并清除选区 | 必测 | 必测 |
+| Escape 关闭浮层并清除选区 | 必测 | 必测 |
+| 窗口 resize 后浮层不越过消息区边界；允许关闭或重新定位 | 必测 | 必测 |
+| Electron zoom / Windows DPI 缩放下浮层不越过消息区边界 | 建议 | 必测 |
 | 发送、重新编辑、历史恢复 | 必测 | 必测 |
 | fork 后快照与来源定位 | 必测 | 必测 |
 
@@ -1301,9 +1318,11 @@ npm run compile:electron
 | Renderer 草稿内存积累 | 每 session 上限、发送成功清理、删除 session 清理 |
 | 新会话启动失败后 snippets 被误清空 | start 失败路径显式返回 `false` |
 | 每条消息注册全局监听导致性能下降 | 会话详情只保留一个浮层和一份全局监听 |
+| 滚动时重复读取 Selection rect 导致浮层抖动 | 只在 `mouseup` 时计算一次滚动内容坐标，消息滚动不重定位 |
+| `position: fixed` 或 body portal 导致浮层覆盖标题栏 | 浮层渲染在消息滚动容器内部，使用容器内 absolute 定位 |
 | fork 后来源定位失效 | old id 到 new id 映射重写 |
 | 老用户覆盖安装失败 | 不改 schema，不做 migration，缺字段按空数组处理 |
-| Windows 高 DPI 下浮层越界 | portal + viewport clamp，Windows 实机验证 |
+| Windows 高 DPI 下浮层越界 | 滚动容器坐标换算 + 容器边界 clamp，Windows 实机验证 |
 | subagent 或 artifact 意外出现入口 | callback 只从主 Cowork 详情透传 |
 | OpenClaw 未来升级行为变化 | 升级固定版本时重新审计 schema、handler、文档和 patch |
 
