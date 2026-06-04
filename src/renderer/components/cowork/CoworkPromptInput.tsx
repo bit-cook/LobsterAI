@@ -10,6 +10,13 @@ import {
 } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import { agentService } from '../../services/agent';
+import {
+  ASR_MAX_RECORDING_MS,
+  getAsrErrorMessage,
+  recognizeVoiceInput,
+  startVoiceRecording,
+  type VoiceRecordingSession,
+} from '../../services/asr';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
@@ -42,6 +49,7 @@ import { getCompactFolderName } from '../../utils/path';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import type { BrowserAnnotationPayload } from '../artifacts';
 import DefaultAgentIcon from '../icons/DefaultAgentIcon';
+import MicrophoneIcon from '../icons/MicrophoneIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
 import PromptAddIcon from '../icons/PromptAddIcon';
 import SkillIcon from '../icons/SkillIcon';
@@ -145,6 +153,14 @@ const ContextLabelMaxLength = {
 } as const;
 
 const READ_ONLY_CONTEXT_COMPACT_WIDTH = 168;
+
+const VoiceInputState = {
+  Idle: 'idle',
+  Recording: 'recording',
+  Recognizing: 'recognizing',
+} as const;
+
+type VoiceInputState = typeof VoiceInputState[keyof typeof VoiceInputState];
 
 const truncateDisplayText = (value: string, maxLength: number): string => {
   const trimmed = value.trim();
@@ -253,6 +269,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const coworkAgentEngine = useSelector((state: RootState) => state.cowork.config.agentEngine);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
+    const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
@@ -269,6 +286,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [textareaScrollTop, setTextareaScrollTop] = useState(0);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [showSkillsPopover, setShowSkillsPopover] = useState(false);
+    const [voiceInputState, setVoiceInputState] = useState<VoiceInputState>(VoiceInputState.Idle);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -281,6 +299,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
+    const voiceRecordingRef = useRef<VoiceRecordingSession | null>(null);
+    const voiceAutoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const valueRef = useRef(value);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
@@ -406,6 +427,86 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     globalSelectedModel: currentAgentSelectedModel,
   });
   const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
+
+  const appendRecognizedVoiceText = useCallback((recognizedText: string) => {
+    const text = recognizedText.trim();
+    if (!text) return;
+    const currentValue = valueRef.current;
+    const separator = currentValue.trim() ? (currentValue.endsWith('\n') ? '' : '\n') : '';
+    const nextValue = `${currentValue}${separator}${text}`;
+    setValue(nextValue);
+    dispatch(setDraftPrompt({ sessionId: draftKey, draft: nextValue }));
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+      textarea.selectionStart = nextValue.length;
+      textarea.selectionEnd = nextValue.length;
+    });
+  }, [dispatch, draftKey, maxHeight, minHeight]);
+
+  const clearVoiceAutoStopTimer = useCallback(() => {
+    if (voiceAutoStopTimerRef.current) {
+      clearTimeout(voiceAutoStopTimerRef.current);
+      voiceAutoStopTimerRef.current = null;
+    }
+  }, []);
+
+  const stopVoiceRecordingAndRecognize = useCallback(async () => {
+    const recording = voiceRecordingRef.current;
+    if (!recording) return;
+    voiceRecordingRef.current = null;
+    clearVoiceAutoStopTimer();
+    setVoiceInputState(VoiceInputState.Recognizing);
+    try {
+      const wavBlob = await recording.stop();
+      const result = await recognizeVoiceInput(wavBlob);
+      appendRecognizedVoiceText(result.text);
+    } catch (error) {
+      showToast(getAsrErrorMessage(error));
+    } finally {
+      setVoiceInputState(VoiceInputState.Idle);
+    }
+  }, [appendRecognizedVoiceText, clearVoiceAutoStopTimer]);
+
+  const handleVoiceInput = useCallback(async () => {
+    if (!isLoggedIn || disabled || isStreaming) return;
+    if (voiceInputState === VoiceInputState.Recording) {
+      await stopVoiceRecordingAndRecognize();
+      return;
+    }
+    if (voiceInputState === VoiceInputState.Recognizing) return;
+
+    try {
+      textareaRef.current?.focus();
+      const recording = await startVoiceRecording();
+      voiceRecordingRef.current = recording;
+      setVoiceInputState(VoiceInputState.Recording);
+      voiceAutoStopTimerRef.current = setTimeout(() => {
+        void stopVoiceRecordingAndRecognize();
+      }, ASR_MAX_RECORDING_MS);
+    } catch (error) {
+      voiceRecordingRef.current?.cancel();
+      voiceRecordingRef.current = null;
+      clearVoiceAutoStopTimer();
+      setVoiceInputState(VoiceInputState.Idle);
+      showToast(getAsrErrorMessage(error));
+    }
+  }, [clearVoiceAutoStopTimer, disabled, isLoggedIn, isStreaming, stopVoiceRecordingAndRecognize, voiceInputState]);
+
+  useEffect(() => {
+    return () => {
+      clearVoiceAutoStopTimer();
+      voiceRecordingRef.current?.cancel();
+      voiceRecordingRef.current = null;
+    };
+  }, [clearVoiceAutoStopTimer]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   // Load skills on mount
   useEffect(() => {
@@ -1429,9 +1530,44 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       />
     </div>
   ) : null;
+
+  const isVoiceRecording = voiceInputState === VoiceInputState.Recording;
+  const isVoiceRecognizing = voiceInputState === VoiceInputState.Recognizing;
+  const voiceInputUnavailable = !isLoggedIn || disabled || isStreaming;
+  const voiceInputTitle = !isLoggedIn
+    ? i18nService.t('voiceInputLoginRequired')
+    : isVoiceRecording
+      ? i18nService.t('voiceInputStopRecording')
+      : isVoiceRecognizing
+        ? i18nService.t('voiceInputRecognizing')
+        : i18nService.t('voiceInput');
+  const voiceButtonStateClass = isVoiceRecording
+    ? 'bg-red-500/10 text-red-500 hover:bg-red-500/15'
+    : isVoiceRecognizing
+      ? 'bg-primary/10 text-primary'
+      : voiceInputUnavailable
+        ? 'cursor-not-allowed text-secondary/40 opacity-60'
+        : 'text-secondary hover:bg-surface-raised hover:text-foreground';
+  const renderVoiceInputButton = (buttonClassName: string, iconClassName: string) => (
+    <button
+      type="button"
+      onClick={handleVoiceInput}
+      aria-disabled={voiceInputUnavailable || isVoiceRecognizing}
+      aria-label={voiceInputTitle}
+      title={voiceInputTitle}
+      className={`${buttonClassName} ${voiceButtonStateClass} transition-colors`}
+    >
+      <MicrophoneIcon className={`${iconClassName} ${isVoiceRecognizing ? 'animate-pulse' : ''}`} />
+    </button>
+  );
+
   const largeInputToolActions = (
     <div className="flex items-center gap-0.5">
       {largeInputActions}
+      {!remoteManaged && renderVoiceInputButton(
+        'flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg',
+        'h-5 w-5',
+      )}
       <MediaModelPicker draftKey={draftKey} disabled={disabled} />
     </div>
   );
@@ -1869,6 +2005,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 >
                   <PaperClipIcon className="h-5 w-5" />
                 </button>
+                {renderVoiceInputButton(
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+                  'h-5 w-5',
+                )}
               </div>
             )}
 
