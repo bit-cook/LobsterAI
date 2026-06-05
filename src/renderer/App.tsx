@@ -218,15 +218,8 @@ const App: React.FC = () => {
             }
           });
         }
-        const fallbackModels = config.model.availableModels.map(model => ({
-          id: model.id,
-          name: model.name,
-          providerKey: undefined,
-          supportsImage: model.supportsImage ?? false,
-        }));
-        const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
-        if (resolvedModels.length > 0) {
-          dispatch(setAvailableModels(resolvedModels));
+        dispatch(setAvailableModels(providerModels));
+        if (providerModels.length > 0) {
           const allModels = store.getState().model.availableModels;
           const preferredModel = allModels.find(
             model => model.id === config.model.defaultModel
@@ -579,9 +572,7 @@ const App: React.FC = () => {
           });
         }
       });
-      if (allModels.length > 0) {
-        dispatch(setAvailableModels(allModels));
-      }
+      dispatch(setAvailableModels(allModels));
     }
   };
 

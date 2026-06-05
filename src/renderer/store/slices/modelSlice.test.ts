@@ -102,6 +102,32 @@ describe('setServerModels / clearServerModels', () => {
     expect(state.availableModels[0]).toEqual(lockedServerModel);
   });
 
+  test('setServerModels displays a locked server model when no custom models exist', () => {
+    let state = makeState({
+      availableModels: [],
+      defaultSelectedModel: modelA,
+      selectedModelByAgent: {},
+    });
+
+    state = modelReducer(state, setServerModels([lockedServerModel]));
+
+    expect(state.availableModels).toEqual([lockedServerModel]);
+    expect(state.defaultSelectedModel).toEqual(lockedServerModel);
+  });
+
+  test('setAvailableModels clears fallback custom models while preserving locked server models', () => {
+    let state = makeState({
+      availableModels: [lockedServerModel, modelA],
+      defaultSelectedModel: modelA,
+      selectedModelByAgent: {},
+    });
+
+    state = modelReducer(state, setAvailableModels([]));
+
+    expect(state.availableModels).toEqual([lockedServerModel]);
+    expect(state.defaultSelectedModel).toEqual(lockedServerModel);
+  });
+
   test('setServerModels clears per-agent selections that resolve to locked server models', () => {
     let state = makeState({
       availableModels: [lockedServerModel, modelA],

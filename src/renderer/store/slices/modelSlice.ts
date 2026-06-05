@@ -50,7 +50,7 @@ function selectPreferredAccessibleModel(
   if (isModelAccessible(matchedModel)) {
     return matchedModel;
   }
-  return allAvailableModels.find(isModelAccessible) ?? currentModel;
+  return allAvailableModels.find(isModelAccessible) ?? matchedModel ?? allAvailableModels[0] ?? currentModel;
 }
 
 // 从 providers 配置中构建初始可用模型列表

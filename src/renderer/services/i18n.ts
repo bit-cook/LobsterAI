@@ -1185,6 +1185,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Cowork 错误消息
     coworkErrorAuthInvalid: 'API 密钥无效或已过期，请在设置中检查并更新您的 API 密钥。',
+    coworkErrorFreeQuotaExhausted:
+      '当前模型的免费额度已用完，升级套餐后可继续使用。\n\n[立即升级](https://c.youdao.com/dict/hardware/octopus/lobsterai-portal.html)',
     coworkErrorInsufficientBalance: 'API 余额不足，请充值后重试。',
     coworkErrorInputTooLong: '输入内容过长，超出模型上下文限制，请缩短对话内容后重试。',
     coworkErrorMessageTooLarge:
@@ -1411,7 +1413,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     manageKits: '管理套件',
     searchKits: '搜索套件',
     clearKit: '清除套件',
-    noKitsInstalled: '暂无已安装专家套件',
+    noKitsInstalled: '暂未安装专家套件',
+    kitInstallGuideDescription: '基于工作场景的标准能力包',
+    kitGoInstall: '去安装',
     kitSearchNoResults: '未找到匹配套件',
     kitInstallRequired: '需要安装',
     kitInstallRequiredDesc: '该套件尚未安装，是否立即安装并体验？',
@@ -3636,6 +3640,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Cowork error messages
     coworkErrorAuthInvalid:
       'Invalid or expired API key. Please check and update your API key in settings.',
+    coworkErrorFreeQuotaExhausted:
+      'The current model\'s free quota has been used up. Upgrade your plan to continue.\n\n[Upgrade now](https://c.youdao.com/dict/hardware/octopus/lobsterai-portal.html)',
     coworkErrorInsufficientBalance: 'Insufficient API balance. Please top up and try again.',
     coworkErrorInputTooLong:
       'Input too long, exceeding model context limit. Please shorten the conversation and try again.',
@@ -3872,7 +3878,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     manageKits: 'Manage Kits',
     searchKits: 'Search kits',
     clearKit: 'Clear Kit',
-    noKitsInstalled: 'No expert kits installed',
+    noKitsInstalled: 'No expert kits installed yet',
+    kitInstallGuideDescription: 'Standard capability packs for work scenarios',
+    kitGoInstall: 'Install kits',
     kitSearchNoResults: 'No matching kits found',
     kitInstallRequired: 'Installation Required',
     kitInstallRequiredDesc: 'This kit is not installed yet. Install it now to try?',

@@ -554,41 +554,44 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
   })();
 
   return (
-    <div ref={containerRef} className="relative">
-      <div
-        onClick={() => setOpen(!open)}
-        className={`w-28 rounded-lg border px-2.5 py-1 text-xs cursor-pointer select-none text-center outline-none transition-colors
-          dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
-          ${open
-            ? 'border-claude-accent ring-1 ring-claude-accent/30'
-            : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
-          }`}
-      >
-        {currentLabel}
-      </div>
-      {open && (
-        <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset shadow-elevated py-1">
-          {SEND_SHORTCUT_OPTIONS.map((option) => {
-            const label = isMacPlatform ? option.labelMac : option.label;
-            const isActive = value === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => { onChange(option.value); setOpen(false); }}
-                className={`flex items-center justify-between w-full px-3 py-1.5 text-xs transition-colors
-                  ${isActive
-                    ? 'dark:text-claude-accent text-claude-accent font-medium'
-                    : 'dark:text-claude-darkText text-claude-text'
-                  } hover:bg-claude-accent/10`}
-              >
-                <span>{label}</span>
-                {isActive && <span className="text-claude-accent">✓</span>}
-              </button>
-            );
-          })}
+    <div ref={containerRef} className="flex items-center gap-2">
+      <div className="relative">
+        <div
+          onClick={() => setOpen(!open)}
+          className={`w-28 rounded-lg border px-2.5 py-1 text-xs cursor-pointer select-none text-center outline-none transition-colors
+            dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
+            ${open
+              ? 'border-claude-accent ring-1 ring-claude-accent/30'
+              : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
+            }`}
+        >
+          {currentLabel}
         </div>
-      )}
+        {open && (
+          <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset shadow-elevated py-1">
+            {SEND_SHORTCUT_OPTIONS.map((option) => {
+              const label = isMacPlatform ? option.labelMac : option.label;
+              const isActive = value === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => { onChange(option.value); setOpen(false); }}
+                  className={`flex items-center justify-between w-full px-3 py-1.5 text-xs transition-colors
+                    ${isActive
+                      ? 'dark:text-claude-accent text-claude-accent font-medium'
+                      : 'dark:text-claude-darkText text-claude-text'
+                    } hover:bg-claude-accent/10`}
+                >
+                  <span>{label}</span>
+                  {isActive && <span className="text-claude-accent">✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <span className="h-6 w-6 shrink-0" aria-hidden="true" />
     </div>
   );
 };
@@ -3672,7 +3675,7 @@ const Settings: React.FC<SettingsProps> = ({
             <div className="overflow-hidden rounded-xl border border-border bg-surface">
               {filteredShortcutGroups.length > 0 ? filteredShortcutGroups.map((group, groupIndex) => (
                 <div key={group.titleKey}>
-                  <div className={`border-border bg-surface-raised/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-secondary ${
+                  <div className={`border-border-subtle bg-surface-raised/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-secondary ${
                     groupIndex === 0 ? '' : 'border-t'
                   }`}>
                     {i18nService.t(group.titleKey)}
@@ -3684,7 +3687,7 @@ const Settings: React.FC<SettingsProps> = ({
                       <div
                         key={command.key}
                         className={`group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 ${
-                          commandIndex === 0 ? '' : 'border-t border-border/70'
+                          commandIndex === 0 ? '' : 'border-t border-border-subtle'
                         }`}
                       >
                         <div className="min-w-0">
@@ -3695,7 +3698,7 @@ const Settings: React.FC<SettingsProps> = ({
                             {getShortcutCommandText(command, 'descriptionKey')}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-end gap-2">
                           {command.inputType === 'send' ? (
                             <SendShortcutSelect
                               value={value}
@@ -3708,7 +3711,7 @@ const Settings: React.FC<SettingsProps> = ({
                               onChange={(nextValue) => handleShortcutChange(command.key, nextValue)}
                             />
                           )}
-                          {value && (
+                          {value ? (
                             <button
                               type="button"
                               onClick={() => handleShortcutChange(command.key, '')}
@@ -3718,6 +3721,8 @@ const Settings: React.FC<SettingsProps> = ({
                             >
                               <TrashIcon className="h-3.5 w-3.5" />
                             </button>
+                          ) : (
+                            <span className="h-6 w-6 shrink-0" aria-hidden="true" />
                           )}
                         </div>
                       </div>
