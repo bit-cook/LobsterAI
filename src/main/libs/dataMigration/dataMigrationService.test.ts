@@ -78,6 +78,15 @@ const writeSqliteFixture = (dbPath: string, label: string): void => {
   }
 };
 
+const openSqliteFixtureWithWalChange = (dbPath: string, label: string): Database.Database => {
+  writeSqliteFixture(dbPath, label);
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('wal_autocheckpoint = 0');
+  db.prepare('INSERT INTO cowork_sessions (id) VALUES (?)').run(`${label}-wal-session`);
+  return db;
+};
+
 const readSqliteValue = (dbPath: string, sql: string, params: unknown[] = []): unknown => {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
@@ -307,6 +316,38 @@ test('performDataMigrationRestoreSync restores backup data without a pending mar
   expect(readSqliteCount(path.join(targetUserData, DB_FILENAME), 'user_memory_sources')).toBe(1);
 });
 
+test('performDataMigrationRestoreSync checkpoints archived WAL data into the restored sqlite database', () => {
+  const root = makeTempDir();
+  const sourceUserData = path.join(root, 'source', 'LobsterAI');
+  const targetUserData = path.join(root, 'target', 'LobsterAI');
+  const rollbackRoot = path.join(root, 'rollbacks');
+  const archivePath = path.join(root, 'source-backup.tar.gz');
+
+  const sourceDb = openSqliteFixtureWithWalChange(path.join(sourceUserData, DB_FILENAME), 'source');
+  try {
+    writeSqliteFixture(path.join(targetUserData, DB_FILENAME), 'target');
+    createMigrationArchiveSync({ userDataPath: sourceUserData, outputPath: archivePath });
+  } finally {
+    sourceDb.close();
+  }
+
+  const result = performDataMigrationRestoreSync({
+    userDataPath: targetUserData,
+    rollbackRootPath: rollbackRoot,
+    archivePath,
+    now: new Date('2026-06-08T01:02:03Z'),
+  });
+
+  expect(result?.status).toBe(DataMigrationRestoreStatus.Success);
+  expect(fs.existsSync(path.join(targetUserData, `${DB_FILENAME}-wal`))).toBe(false);
+  expect(fs.existsSync(path.join(targetUserData, `${DB_FILENAME}-shm`))).toBe(false);
+  expect(readSqliteString(
+    path.join(targetUserData, DB_FILENAME),
+    'SELECT id FROM cowork_sessions WHERE id = ?',
+    ['source-wal-session'],
+  )).toBe('source-wal-session');
+});
+
 test('performDataMigrationRestoreSync restores valid backup when current sqlite is unreadable', () => {
   const root = makeTempDir();
   const sourceUserData = path.join(root, 'source', 'LobsterAI');
@@ -349,7 +390,11 @@ test('performPendingDataMigrationRestoreSync replaces data in place and preserve
   writeFile(path.join(sourceUserData, 'Network', 'Cookies'), 'source-network-cookies');
   writeFile(path.join(sourceUserData, 'openclaw', 'mcp-packages', 'demo', 'node_modules', 'native.node'), 'native');
   writeFile(path.join(sourceUserData, 'runtimes', 'python', 'python.exe'), 'source-runtime');
+  writeFile(path.join(sourceUserData, `${DB_FILENAME}-wal`), 'source-wal');
+  writeFile(path.join(sourceUserData, `${DB_FILENAME}-shm`), 'source-shm');
   writeSqliteFixture(path.join(targetUserData, DB_FILENAME), 'target');
+  writeFile(path.join(targetUserData, `${DB_FILENAME}-wal`), 'target-wal');
+  writeFile(path.join(targetUserData, `${DB_FILENAME}-shm`), 'target-shm');
   writeFile(path.join(targetUserData, 'old-only.txt'), 'old');
   writeFile(path.join(targetUserData, 'backups', 'sqlite', 'snapshots', 'lobsterai-latest.sqlite'), 'target-backup');
   writeFile(path.join(targetUserData, 'cowork', 'bin', 'node.cmd'), 'target-shim');
@@ -381,6 +426,8 @@ test('performPendingDataMigrationRestoreSync replaces data in place and preserve
   expect(fs.existsSync(path.join(targetUserData, 'backups'))).toBe(false);
   expect(fs.existsSync(path.join(targetUserData, 'cowork'))).toBe(false);
   expect(fs.existsSync(path.join(targetUserData, 'runtimes'))).toBe(false);
+  expect(fs.existsSync(path.join(targetUserData, `${DB_FILENAME}-wal`))).toBe(false);
+  expect(fs.existsSync(path.join(targetUserData, `${DB_FILENAME}-shm`))).toBe(false);
   expect(fs.existsSync(path.join(targetUserData, 'old-only.txt'))).toBe(false);
   expect(fs.readFileSync(path.join(targetUserData, 'Network', 'Cookies'), 'utf8')).toBe('runtime-cookies');
   expect(fs.readFileSync(path.join(targetUserData, 'SingletonLock'), 'utf8')).toBe('runtime-lock');

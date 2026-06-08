@@ -20,6 +20,18 @@ const LAST_RESTORE_RESULT_FILE_NAME = '.lobsterai-data-migration-restore-result.
 const ARCHIVE_FORMAT = 'lobsterai-user-data';
 const ARCHIVE_FORMAT_VERSION = 1;
 const SQLITE_BACKUP_TOP_LEVEL_DIR_NAME = SQLITE_BACKUP_DIR_NAME.split('/')[0] || 'backups';
+const SQLITE_RESTORE_FILE_NAMES = [
+  DB_FILENAME,
+  `${DB_FILENAME}-wal`,
+  `${DB_FILENAME}-shm`,
+] as const;
+const SQLITE_REPLACE_RETRY_DELAYS_MS = [
+  50,
+  100,
+  250,
+  500,
+  1_000,
+] as const;
 
 const SQLITE_MIGRATION_TABLES = [
   'kv',
@@ -223,6 +235,11 @@ const isExcludedMigrationEntry = (relativePosixPath: string): boolean => {
   ));
 };
 
+const isTopLevelSqliteRestoreEntry = (relativePosixPath: string): boolean => {
+  const firstSegment = relativePosixPath.split('/')[0] || '';
+  return SQLITE_RESTORE_FILE_NAMES.includes(firstSegment as typeof SQLITE_RESTORE_FILE_NAMES[number]);
+};
+
 const getExclusionManifestFields = (archiveKind: DataMigrationArchiveKind): Record<string, unknown> => {
   if (archiveKind === 'rollback') {
     return {
@@ -274,6 +291,42 @@ const removeDirIfExistsSync = (dirPath: string): void => {
   fs.rmSync(dirPath, { recursive: true, force: true });
 };
 
+const waitSync = (delayMs: number): void => {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, delayMs);
+};
+
+const isRetryableFileSystemError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String(error.code) : '';
+  return code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'ENOTEMPTY';
+};
+
+const retryFileSystemOperationSync = (operationName: string, operation: () => void): void => {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= SQLITE_REPLACE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      operation();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableFileSystemError(error) || attempt >= SQLITE_REPLACE_RETRY_DELAYS_MS.length) {
+        break;
+      }
+      waitSync(SQLITE_REPLACE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`${operationName} failed: ${message}`);
+};
+
+const removePathWithRetrySync = (targetPath: string): void => {
+  retryFileSystemOperationSync(`Remove ${path.basename(targetPath)}`, () => {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+  });
+};
+
 const computeFileSha256Sync = (filePath: string): string => {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(filePath));
@@ -283,6 +336,26 @@ const computeFileSha256Sync = (filePath: string): string => {
 const copyFileSync = (sourcePath: string, targetPath: string): void => {
   ensureDirSync(path.dirname(targetPath));
   fs.copyFileSync(sourcePath, targetPath);
+};
+
+const copyFileReplacingWithRetrySync = (sourcePath: string, targetPath: string): void => {
+  ensureDirSync(path.dirname(targetPath));
+  const tempTargetPath = path.join(
+    path.dirname(targetPath),
+    `.${path.basename(targetPath)}.restore-${crypto.randomUUID()}.tmp`,
+  );
+  try {
+    copyFileSync(sourcePath, tempTargetPath);
+    retryFileSystemOperationSync(`Replace ${path.basename(targetPath)}`, () => {
+      fs.renameSync(tempTargetPath, targetPath);
+    });
+  } finally {
+    try {
+      fs.rmSync(tempTargetPath, { force: true });
+    } catch {
+      // Ignore temporary cleanup failures; the final target has already been verified later.
+    }
+  }
 };
 
 const copyDirectorySync = (
@@ -385,6 +458,29 @@ const assertMigrationSqliteReadySync = (dbPath: string, label: string): SqliteMi
     throw new Error(`${label} ${DB_FILENAME} failed quick_check: ${summary.quickCheck || 'empty result'}`);
   }
   return summary;
+};
+
+const checkpointSqliteDatabaseSync = (dbPath: string, label: string): void => {
+  for (const fileName of SQLITE_RESTORE_FILE_NAMES) {
+    const sqlitePath = path.join(path.dirname(dbPath), fileName);
+    if (!fs.existsSync(sqlitePath)) continue;
+    try {
+      fs.chmodSync(sqlitePath, 0o600);
+    } catch {
+      // Best effort; extracted archives may already have writable files.
+    }
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { fileMustExist: true });
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} failed to checkpoint ${DB_FILENAME}: ${message}`);
+  } finally {
+    db?.close();
+  }
 };
 
 const buildManifest = (input: CreateMigrationArchiveInput): Record<string, unknown> => {
@@ -700,7 +796,47 @@ const clearRestorableUserDataSync = (userDataPath: string): void => {
   ensureDirSync(userDataPath);
   for (const entry of fs.readdirSync(userDataPath)) {
     if (isPreservedRestoreTopLevelEntry(entry)) continue;
+    if (isTopLevelSqliteRestoreEntry(entry)) continue;
     removeDirIfExistsSync(path.join(userDataPath, entry));
+  }
+};
+
+const replaceSqliteDatabaseSync = (
+  sourceRoot: string,
+  userDataPath: string,
+  options: { includeSidecars?: boolean } = {},
+): void => {
+  const sourceDbPath = path.join(sourceRoot, DB_FILENAME);
+  const targetDbPath = path.join(userDataPath, DB_FILENAME);
+
+  for (const fileName of SQLITE_RESTORE_FILE_NAMES) {
+    removePathWithRetrySync(path.join(userDataPath, fileName));
+  }
+
+  if (!fs.existsSync(sourceDbPath)) {
+    return;
+  }
+  if (!fs.statSync(sourceDbPath).isFile()) {
+    throw new Error(`Backup archive ${DB_FILENAME} entry is not a file.`);
+  }
+
+  copyFileReplacingWithRetrySync(sourceDbPath, targetDbPath);
+
+  if (!options.includeSidecars) {
+    return;
+  }
+
+  for (const fileName of SQLITE_RESTORE_FILE_NAMES.slice(1)) {
+    const sourcePath = path.join(sourceRoot, fileName);
+    if (!fs.existsSync(sourcePath)) continue;
+    if (!fs.statSync(sourcePath).isFile()) continue;
+    copyFileReplacingWithRetrySync(sourcePath, path.join(userDataPath, fileName));
+  }
+};
+
+const removeSqliteSidecarsWithRetrySync = (userDataPath: string): void => {
+  for (const fileName of SQLITE_RESTORE_FILE_NAMES.slice(1)) {
+    removePathWithRetrySync(path.join(userDataPath, fileName));
   }
 };
 
@@ -708,13 +844,20 @@ const replaceRestorableUserDataSync = (
   sourceRoot: string,
   userDataPath: string,
   shouldExcludeCopiedEntry = isExcludedMigrationEntry,
+  options: { includeSqliteSidecars?: boolean } = {},
 ): void => {
   clearRestorableUserDataSync(userDataPath);
   copyDirectorySync(
     sourceRoot,
     userDataPath,
-    (relativePosixPath) => shouldExcludeCopiedEntry(relativePosixPath),
+    (relativePosixPath) => (
+      isTopLevelSqliteRestoreEntry(relativePosixPath)
+      || shouldExcludeCopiedEntry(relativePosixPath)
+    ),
   );
+  replaceSqliteDatabaseSync(sourceRoot, userDataPath, {
+    includeSidecars: options.includeSqliteSidecars,
+  });
 };
 
 const assertSqliteRestoredSync = (
@@ -747,7 +890,9 @@ const assertSqliteRestoredSync = (
 const restoreRollbackArchiveSync = (rollbackPath: string, userDataPath: string): void => {
   const rollback = extractMigrationArchiveToTempSync(rollbackPath, { requireSqliteDatabase: false });
   try {
-    replaceRestorableUserDataSync(rollback.sourceRoot, userDataPath, isPreservedRestoreTopLevelEntry);
+    replaceRestorableUserDataSync(rollback.sourceRoot, userDataPath, isPreservedRestoreTopLevelEntry, {
+      includeSqliteSidecars: true,
+    });
   } finally {
     removeDirIfExistsSync(rollback.tempRoot);
   }
@@ -778,11 +923,14 @@ export const performDataMigrationRestoreSync = (
 
     const extracted = extractMigrationArchiveToTempSync(archivePath);
     extractedTempRoot = extracted.tempRoot;
+    assertMigrationSqliteReadySync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
+    checkpointSqliteDatabaseSync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
     const sourceSummary = assertMigrationSqliteReadySync(path.join(extracted.sourceRoot, DB_FILENAME), 'Backup archive');
 
     targetWasTouched = true;
     replaceRestorableUserDataSync(extracted.sourceRoot, input.userDataPath);
     assertSqliteRestoredSync(extracted.sourceRoot, input.userDataPath, sourceSummary);
+    removeSqliteSidecarsWithRetrySync(input.userDataPath);
 
     const result: DataMigrationLastRestoreResult = {
       status: DataMigrationRestoreStatus.Success,
