@@ -127,6 +127,9 @@ describe('resolveComputerUseRuntimePaths', () => {
     expect(script).not.toContain("requireEnv('CODEX_HOME')");
     expect(script).not.toContain('sky_js');
     expect(script).not.toContain('@oai');
+    expect(script).not.toContain('x-oai-cua-approved-app');
+    expect(script).toContain("const APPROVED_APP_META_KEY = 'x-lobsterai-computer-use-approved-app'");
+    expect(script).toContain('computerUseHome: helperStateHome');
     expect(script).toContain('function renewHelperTurn()');
     expect(script).toContain('function hasHelperInterruptMarker()');
     expect(script).toContain('function ensureFreshHelperTurn()');

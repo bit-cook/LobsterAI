@@ -188,7 +188,7 @@ const { StdioServerTransport } = await import(moduleUrl(sdkRoot, 'dist', 'esm', 
 const { z } = await import(moduleUrl(zodRoot, 'index.js'));
 const { WindowsComputerUseClient } = await import(pathToFileURL(clientModulePath).href);
 
-const APPROVED_APP_META_KEY = 'x-oai-cua-approved-app';
+const APPROVED_APP_META_KEY = 'x-lobsterai-computer-use-approved-app';
 const MAX_TEXT_CHARS = 30000;
 const deniedAppPattern = [
   'cmd.exe',
@@ -214,6 +214,7 @@ function createHelperTurnId() {
   return String(Date.now()) + '-' + String(++nextTurnId);
 }
 const requestMeta = {
+  computerUseHome: helperStateHome,
   session_id: 'lobsterai-computer-use',
   turn_id: createHelperTurnId(),
 };
