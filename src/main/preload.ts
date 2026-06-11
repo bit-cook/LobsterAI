@@ -19,6 +19,7 @@ import {
   type HtmlShareAccessMode,
   type HtmlShareConfigurableStatus,
   HtmlShareIpc,
+  type HtmlShareSourceType,
   type HtmlShareStatus,
 } from '../shared/htmlShare/constants';
 import type {
@@ -605,6 +606,36 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke(HtmlShareIpc.UpdateFromHtmlFile, options),
     getByHtmlFile: (options: { filePath: string }) =>
       ipcRenderer.invoke(HtmlShareIpc.GetByHtmlFile, options),
+    createFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      accessMode?: HtmlShareAccessMode;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+    }) => ipcRenderer.invoke(HtmlShareIpc.CreateFromArtifactFile, options),
+    updateFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      shareId: string;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      accessMode?: HtmlShareAccessMode;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+      currentStatus?: HtmlShareStatus;
+    }) => ipcRenderer.invoke(HtmlShareIpc.UpdateFromArtifactFile, options),
+    getByArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId?: string;
+      artifactId?: string;
+      filePath?: string;
+    }) => ipcRenderer.invoke(HtmlShareIpc.GetByArtifactFile, options),
     updateStatus: (options: { shareId: string; status: HtmlShareConfigurableStatus }) =>
       ipcRenderer.invoke(HtmlShareIpc.UpdateStatus, options),
     updateAccessMode: (options: { shareId: string; accessMode: HtmlShareAccessMode }) =>

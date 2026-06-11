@@ -5,6 +5,7 @@ import {
   type HtmlShareAccessMode as HtmlShareAccessModeValue,
   type HtmlShareConfigurableStatus,
   HtmlShareErrorCode,
+  HtmlShareSourceType,
   HtmlShareStatus,
   type HtmlShareStatus as HtmlShareStatusValue,
 } from '@shared/htmlShare/constants';
@@ -108,15 +109,24 @@ type HtmlShareCopyStatus =
 
 const HtmlSharePendingSource = {
   HtmlFile: 'htmlFile',
+  ArtifactFile: 'artifactFile',
 } as const;
 
+type HtmlSharePendingSource =
+  (typeof HtmlSharePendingSource)[keyof typeof HtmlSharePendingSource];
+
 interface HtmlSharePendingRequest {
-  source: typeof HtmlSharePendingSource.HtmlFile;
+  source: HtmlSharePendingSource;
+  sourceType: HtmlShareSourceType;
   sessionId: string;
   artifactId: string;
-  filePath: string;
+  lookupKey: string;
   title: string;
   accessMode: HtmlShareAccessModeValue;
+  fileName?: string;
+  filePath?: string;
+  content?: string;
+  remoteUrl?: string;
 }
 
 interface HtmlShareDialogState {
@@ -145,7 +155,7 @@ interface ExistingHtmlShareInfo {
 }
 
 interface HtmlShareLookupState {
-  filePath: string;
+  sourceKey: string;
   isLoading: boolean;
   share?: ExistingHtmlShareInfo;
 }
@@ -216,7 +226,87 @@ function getHtmlShareFailureMessage(
   if (result?.code === HtmlShareErrorCode.DisabledCannotUpdate) {
     return t('htmlShareDisabledCannotUpdate');
   }
+  if (result?.code === HtmlShareErrorCode.UnsafeSvg) {
+    return t('artifactShareSvgRejected');
+  }
   return result?.error || t('htmlShareFailed');
+}
+
+function shouldContinueArtifactShareAfterLookupFailure(
+  request: HtmlSharePendingRequest,
+  lookup:
+    | {
+        code?: number;
+        error?: string;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (request.source !== HtmlSharePendingSource.ArtifactFile) return false;
+  if (!lookup?.error) return false;
+  const message = lookup.error.toLowerCase();
+  return lookup.error.includes('参数') || (message.includes('input') && message.includes('parameter'));
+}
+
+function getHtmlShareSourceTypeForArtifact(artifact: Artifact): HtmlShareSourceType | null {
+  if (artifact.type === ArtifactTypeValue.Html) return HtmlShareSourceType.HtmlFile;
+  if (artifact.type === ArtifactTypeValue.Image) return HtmlShareSourceType.ImageFile;
+  if (artifact.type === ArtifactTypeValue.Svg) return HtmlShareSourceType.SvgFile;
+  return null;
+}
+
+function hasShareableArtifactSource(
+  artifact: Artifact,
+  sourceType: HtmlShareSourceType | null,
+): boolean {
+  if (!sourceType) return false;
+  if (sourceType === HtmlShareSourceType.HtmlFile) return Boolean(artifact.filePath);
+  return Boolean(artifact.filePath || artifact.content?.trim() || artifact.remoteUrl?.trim());
+}
+
+function buildHtmlShareLookupKey(
+  artifact: Artifact,
+  sourceType: HtmlShareSourceType,
+  fallbackSessionId?: string,
+): string {
+  if (artifact.filePath) return `${sourceType}:file:${artifact.filePath}`;
+  return `${sourceType}:artifact:${artifact.sessionId || fallbackSessionId || ''}:${artifact.id}`;
+}
+
+function buildHtmlSharePendingRequest(
+  artifact: Artifact,
+  sourceType: HtmlShareSourceType,
+  fallbackSessionId: string,
+): HtmlSharePendingRequest | null {
+  if (!hasShareableArtifactSource(artifact, sourceType)) return null;
+  const sessionId = artifact.sessionId || fallbackSessionId;
+  const title = artifact.title || artifact.fileName || t('htmlShare');
+  if (sourceType === HtmlShareSourceType.HtmlFile) {
+    if (!artifact.filePath) return null;
+    return {
+      source: HtmlSharePendingSource.HtmlFile,
+      sourceType,
+      sessionId,
+      artifactId: artifact.id,
+      lookupKey: buildHtmlShareLookupKey(artifact, sourceType, fallbackSessionId),
+      filePath: artifact.filePath,
+      title,
+      accessMode: HtmlShareAccessMode.Code,
+    };
+  }
+  return {
+    source: HtmlSharePendingSource.ArtifactFile,
+    sourceType,
+    sessionId,
+    artifactId: artifact.id,
+    lookupKey: buildHtmlShareLookupKey(artifact, sourceType, fallbackSessionId),
+    title,
+    accessMode: HtmlShareAccessMode.Code,
+    fileName: artifact.fileName || artifact.title,
+    filePath: artifact.filePath,
+    content: artifact.content,
+    remoteUrl: artifact.remoteUrl,
+  };
 }
 
 function isCopyableArtifact(artifact: Artifact): boolean {
@@ -406,14 +496,27 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     : null;
   const isBrowserTabActive = !selectedArtifact && activeSpecialTab === ArtifactSpecialTab.Browser;
   const htmlShareArtifact =
-    selectedArtifact?.type === ArtifactTypeValue.Html
+    selectedArtifact &&
+    getHtmlShareSourceTypeForArtifact(selectedArtifact) &&
+    hasShareableArtifactSource(
+      selectedArtifact,
+      getHtmlShareSourceTypeForArtifact(selectedArtifact),
+    )
       ? selectedArtifact
-      : isBrowserTabActive && browserHtmlArtifact?.type === ArtifactTypeValue.Html
+      : isBrowserTabActive &&
+          browserHtmlArtifact?.type === ArtifactTypeValue.Html &&
+          hasShareableArtifactSource(browserHtmlArtifact, HtmlShareSourceType.HtmlFile)
         ? browserHtmlArtifact
         : null;
-  const selectedHtmlFilePath = htmlShareArtifact?.filePath;
+  const selectedShareSourceType = htmlShareArtifact
+    ? getHtmlShareSourceTypeForArtifact(htmlShareArtifact)
+    : null;
+  const selectedShareLookupKey =
+    htmlShareArtifact && selectedShareSourceType
+      ? buildHtmlShareLookupKey(htmlShareArtifact, selectedShareSourceType, sessionId)
+      : undefined;
   const selectedHtmlShare =
-    selectedHtmlFilePath && htmlShareLookup?.filePath === selectedHtmlFilePath
+    selectedShareLookupKey && htmlShareLookup?.sourceKey === selectedShareLookupKey
       ? htmlShareLookup.share
       : undefined;
   const selectedArtifactId = selectedArtifact?.id ?? null;
@@ -472,8 +575,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     ? 'p-1 rounded bg-primary/10 text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50'
     : 'p-1 rounded text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50';
   const canShareHtmlArtifact = Boolean(
-    htmlShareArtifact?.type === ArtifactTypeValue.Html &&
-      selectedHtmlFilePath,
+    htmlShareArtifact &&
+      selectedShareSourceType &&
+      selectedShareLookupKey &&
+      hasShareableArtifactSource(htmlShareArtifact, selectedShareSourceType),
   );
   const browserHtmlAutoRefreshFilePath =
     isBrowserTabActive && browserHtmlArtifact?.type === ArtifactTypeValue.Html
@@ -668,7 +773,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
   useEffect(() => {
     if (
-      !selectedHtmlFilePath ||
+      !htmlShareArtifact ||
+      !selectedShareSourceType ||
+      !selectedShareLookupKey ||
       !authState.isLoggedIn ||
       authState.quota?.subscriptionStatus !== 'active'
     ) {
@@ -680,30 +787,39 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     const htmlShareApi = window.electron?.htmlShare;
 
     setHtmlShareLookup(previous => {
-      if (previous?.filePath === selectedHtmlFilePath && previous.share) {
+      if (previous?.sourceKey === selectedShareLookupKey && previous.share) {
         return previous;
       }
-      return { filePath: selectedHtmlFilePath, isLoading: true };
+      return { sourceKey: selectedShareLookupKey, isLoading: true };
     });
 
     if (!htmlShareApi) {
-      setHtmlShareLookup({ filePath: selectedHtmlFilePath, isLoading: false });
+      setHtmlShareLookup({ sourceKey: selectedShareLookupKey, isLoading: false });
       return () => {
         isCancelled = true;
       };
     }
 
-    htmlShareApi
-      .getByHtmlFile({ filePath: selectedHtmlFilePath })
+    const lookupPromise =
+      selectedShareSourceType === HtmlShareSourceType.HtmlFile
+        ? htmlShareApi.getByHtmlFile({ filePath: htmlShareArtifact.filePath || '' })
+        : htmlShareApi.getByArtifactFile({
+            sourceType: selectedShareSourceType,
+            sessionId: htmlShareArtifact.sessionId || sessionId,
+            artifactId: htmlShareArtifact.id,
+            filePath: htmlShareArtifact.filePath,
+          });
+
+    lookupPromise
       .then(lookup => {
         if (isCancelled) return;
         const share = lookup?.success ? getExistingHtmlShareInfo(lookup.share) : null;
         setHtmlShareLookup(previous => {
-          if (!share && previous?.filePath === selectedHtmlFilePath && previous.share) {
+          if (!share && previous?.sourceKey === selectedShareLookupKey && previous.share) {
             return previous;
           }
           return {
-            filePath: selectedHtmlFilePath,
+            sourceKey: selectedShareLookupKey,
             isLoading: false,
             ...(share ? { share } : {}),
           };
@@ -712,10 +828,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       .catch(() => {
         if (isCancelled) return;
         setHtmlShareLookup(previous => {
-          if (previous?.filePath === selectedHtmlFilePath && previous.share) {
+          if (previous?.sourceKey === selectedShareLookupKey && previous.share) {
             return previous;
           }
-          return { filePath: selectedHtmlFilePath, isLoading: false };
+          return { sourceKey: selectedShareLookupKey, isLoading: false };
         });
       });
 
@@ -725,7 +841,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, [
     authState.isLoggedIn,
     authState.quota?.subscriptionStatus,
-    selectedHtmlFilePath,
+    htmlShareArtifact,
+    htmlShareArtifact?.filePath,
+    htmlShareArtifact?.id,
+    htmlShareArtifact?.sessionId,
+    selectedShareLookupKey,
+    selectedShareSourceType,
+    sessionId,
   ]);
 
   useEffect(() => {
@@ -1067,7 +1189,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   );
 
   const openCreateHtmlShareDialog = useCallback((request: HtmlSharePendingRequest) => {
-    const accessMode = HtmlShareAccessMode.Code;
+    const accessMode = normalizeHtmlShareAccessMode(request.accessMode);
     setHtmlSharePendingRequest({ ...request, accessMode });
     setHtmlSharePhase(HtmlSharePhase.Idle);
     setHtmlShareDialog({
@@ -1078,7 +1200,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     });
   }, []);
 
-  const rememberHtmlShare = useCallback((filePath: string, share: unknown) => {
+  const rememberHtmlShare = useCallback((sourceKey: string, share: unknown) => {
     const existingShare = getExistingHtmlShareInfo(
       share as {
         shareId?: string;
@@ -1091,7 +1213,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     );
     if (!existingShare) return;
     setHtmlShareLookup({
-      filePath,
+      sourceKey,
       isLoading: false,
       share: existingShare,
     });
@@ -1153,15 +1275,28 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     try {
       setHtmlSharePhase(HtmlSharePhase.Packing);
       setHtmlSharePhase(HtmlSharePhase.Uploading);
-      const result = await window.electron?.htmlShare?.createFromHtmlFile({
-        sessionId: request.sessionId,
-        artifactId: request.artifactId,
-        filePath: request.filePath,
-        title: request.title,
-        accessMode: request.accessMode,
-      });
+      const result =
+        request.source === HtmlSharePendingSource.HtmlFile
+          ? await window.electron?.htmlShare?.createFromHtmlFile({
+              sessionId: request.sessionId,
+              artifactId: request.artifactId,
+              filePath: request.filePath || '',
+              title: request.title,
+              accessMode: request.accessMode,
+            })
+          : await window.electron?.htmlShare?.createFromArtifactFile({
+              sourceType: request.sourceType,
+              sessionId: request.sessionId,
+              artifactId: request.artifactId,
+              title: request.title,
+              accessMode: request.accessMode,
+              fileName: request.fileName,
+              filePath: request.filePath,
+              content: request.content,
+              remoteUrl: request.remoteUrl,
+            });
       await handleHtmlShareResult(result);
-      rememberHtmlShare(request.filePath, result);
+      rememberHtmlShare(request.lookupKey, result);
     } catch (error) {
       setHtmlSharePhase(HtmlSharePhase.Failed);
       setHtmlShareDialog({
@@ -1224,20 +1359,35 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     try {
       setHtmlSharePhase(HtmlSharePhase.Packing);
       setHtmlSharePhase(HtmlSharePhase.Uploading);
-      const result = await window.electron?.htmlShare?.updateFromHtmlFile({
-        shareId,
-        sessionId: request.sessionId,
-        artifactId: request.artifactId,
-        filePath: request.filePath,
-        title: request.title,
-        currentStatus,
-        accessMode,
-      });
+      const result =
+        request.source === HtmlSharePendingSource.HtmlFile
+          ? await window.electron?.htmlShare?.updateFromHtmlFile({
+              shareId,
+              sessionId: request.sessionId,
+              artifactId: request.artifactId,
+              filePath: request.filePath || '',
+              title: request.title,
+              currentStatus,
+              accessMode,
+            })
+          : await window.electron?.htmlShare?.updateFromArtifactFile({
+              sourceType: request.sourceType,
+              shareId,
+              sessionId: request.sessionId,
+              artifactId: request.artifactId,
+              title: request.title,
+              accessMode,
+              fileName: request.fileName,
+              filePath: request.filePath,
+              content: request.content,
+              remoteUrl: request.remoteUrl,
+              currentStatus,
+            });
       if (!result?.success || !result.url) {
         throw new Error(getHtmlShareFailureMessage(result));
       }
       const resultStatus = getConfigurableHtmlShareStatus(result.status) ?? HtmlShareStatus.Live;
-      rememberHtmlShare(request.filePath, result);
+      rememberHtmlShare(request.lookupKey, result);
       setHtmlSharePhase(HtmlSharePhase.Live);
       setHtmlShareDialog(previous => {
         if (
@@ -1334,7 +1484,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCodeUnavailable: result.shareCodeUnavailable,
         status: result.status ?? htmlShareDialog.status,
       };
-      rememberHtmlShare(request.filePath, refreshedShare);
+      rememberHtmlShare(request.lookupKey, refreshedShare);
       setHtmlShareDialog(previous => {
         if (
           !previous ||
@@ -1415,9 +1565,17 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       let refreshedShare: ExistingHtmlShareInfo | null = null;
       if (request) {
         try {
-          const lookup = await window.electron?.htmlShare?.getByHtmlFile({
-            filePath: request.filePath,
-          });
+          const lookup =
+            request.source === HtmlSharePendingSource.HtmlFile
+              ? await window.electron?.htmlShare?.getByHtmlFile({
+                  filePath: request.filePath || '',
+                })
+              : await window.electron?.htmlShare?.getByArtifactFile({
+                  sourceType: request.sourceType,
+                  sessionId: request.sessionId,
+                  artifactId: request.artifactId,
+                  filePath: request.filePath,
+                });
           if (lookup?.success) {
             refreshedShare = getExistingHtmlShareInfo(lookup.share);
           }
@@ -1437,7 +1595,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         status: resultStatus,
       };
       if (request) {
-        rememberHtmlShare(request.filePath, refreshedResult);
+        rememberHtmlShare(request.lookupKey, refreshedResult);
       }
       setHtmlShareDialog(previous => {
         if (
@@ -1491,40 +1649,52 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   ]);
 
   const handleShareHtmlArtifact = useCallback(async () => {
-    if (
-      !htmlShareArtifact ||
-      !selectedHtmlFilePath ||
-      htmlShareArtifact.type !== ArtifactTypeValue.Html ||
-      isHtmlSharing
-    )
+    if (!htmlShareArtifact || !selectedShareSourceType || isHtmlSharing)
       return;
-    if (!(await ensureHtmlShareAllowed())) return;
-    const request: HtmlSharePendingRequest = {
-      source: HtmlSharePendingSource.HtmlFile,
+    const request = buildHtmlSharePendingRequest(
+      htmlShareArtifact,
+      selectedShareSourceType,
       sessionId,
-      artifactId: htmlShareArtifact.id,
-      filePath: selectedHtmlFilePath,
-      title: htmlShareArtifact.title || htmlShareArtifact.fileName || t('htmlShare'),
-      accessMode: HtmlShareAccessMode.Code,
-    };
+    );
+    if (!request) {
+      setHtmlShareDialog({
+        kind: HtmlShareDialogKind.Result,
+        title: t('htmlShareFailed'),
+        message: t('artifactShareSourceUnavailable'),
+      });
+      return;
+    }
+    if (!(await ensureHtmlShareAllowed())) return;
     try {
       if (selectedHtmlShare) {
         openExistingHtmlShareDialog(request, selectedHtmlShare);
         return;
       }
       setHtmlSharePhase(HtmlSharePhase.Checking);
-      const lookup = await window.electron?.htmlShare?.getByHtmlFile({
-        filePath: selectedHtmlFilePath,
-      });
+      const lookup =
+        request.source === HtmlSharePendingSource.HtmlFile
+          ? await window.electron?.htmlShare?.getByHtmlFile({
+              filePath: request.filePath || '',
+            })
+          : await window.electron?.htmlShare?.getByArtifactFile({
+              sourceType: request.sourceType,
+              sessionId: request.sessionId,
+              artifactId: request.artifactId,
+              filePath: request.filePath,
+            });
       if (!lookup?.success) {
         if (lookup?.code === HtmlShareErrorCode.FeatureUnavailable) {
           throw new Error(t('htmlShareUnavailableInProduction'));
+        }
+        if (shouldContinueArtifactShareAfterLookupFailure(request, lookup)) {
+          openCreateHtmlShareDialog(request);
+          return;
         }
         throw new Error(lookup?.error || t('htmlShareFailed'));
       }
       const existingShare = getExistingHtmlShareInfo(lookup.share);
       if (existingShare) {
-        rememberHtmlShare(request.filePath, existingShare);
+        rememberHtmlShare(request.lookupKey, existingShare);
         openExistingHtmlShareDialog(request, existingShare);
         return;
       }
@@ -1544,8 +1714,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     openExistingHtmlShareDialog,
     rememberHtmlShare,
     htmlShareArtifact,
-    selectedHtmlFilePath,
     selectedHtmlShare,
+    selectedShareSourceType,
     sessionId,
   ]);
 
@@ -1651,8 +1821,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const htmlShareSelectedAccessMode = normalizeHtmlShareAccessMode(
     htmlShareDialog?.selectedAccessMode ?? htmlShareDialog?.accessMode,
   );
+  const canShowHtmlShareAccessModeControls =
+    isHtmlShareCreateDialog || isHtmlShareExistingDialog;
   const isHtmlShareAccessModeChanged =
     isHtmlShareExistingDialog &&
+    canShowHtmlShareAccessModeControls &&
     htmlShareSelectedAccessMode !== normalizeHtmlShareAccessMode(htmlShareDialog?.accessMode);
   const isHtmlShareAccessModeActionDisabled = Boolean(
     !isHtmlShareAccessModeChanged || isHtmlShareStatusUpdating || isHtmlSharing,
@@ -1961,7 +2134,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   </div>
                 )}
 
-                {(isHtmlShareCreateDialog || isHtmlShareExistingDialog) && (
+                {canShowHtmlShareAccessModeControls && (
                   <div className="mt-5">
                     <div className="mb-2 text-sm font-medium text-foreground">
                       {t('htmlShareAccessMode')}

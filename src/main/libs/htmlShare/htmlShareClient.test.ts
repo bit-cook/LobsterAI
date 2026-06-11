@@ -86,6 +86,7 @@ describe('htmlShareClient', () => {
 
     expect(requestedUrl).toBe('https://lobsterai-server.inner.youdao.com/api/html-shares');
     expect(requestedForm).not.toBeNull();
+    expect(requestedForm!.get('sourceType')).toBe(HtmlShareSourceType.HtmlFile);
     expect(requestedForm!.get('accessMode')).toBe(HtmlShareAccessMode.Public);
     expect(result.success).toBe(true);
     expect(result.url).toBe('https://lobsterai-server.youdao.com/s/shr_test/');
@@ -172,9 +173,57 @@ describe('htmlShareClient', () => {
     expect(requestedUrl).toBe('https://lobsterai-server.inner.youdao.com/api/html-shares/shr_test');
     expect(requestedMethod).toBe('PUT');
     expect(requestedForm).not.toBeNull();
+    expect(requestedForm!.get('sourceType')).toBe(HtmlShareSourceType.HtmlFile);
     expect(requestedForm!.get('accessMode')).toBe(HtmlShareAccessMode.Code);
     expect(result.success).toBe(true);
     expect(result.url).toBe('https://lobsterai-server.youdao.com/s/shr_test/');
+  });
+
+  test('updates an artifact image share with source type and access mode', async () => {
+    const archivePath = await createArchiveFile();
+    let requestedForm: FormData | null = null;
+
+    const result = await updateHtmlShare(
+      'https://lobsterai-server.inner.youdao.com',
+      'https://lobsterai-server.inner.youdao.com/s',
+      async (_url, options) => {
+        if (options?.body instanceof FormData) requestedForm = options.body;
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              shareId: 'shr_image',
+              url: 'https://lobsterai-server.youdao.com/s/shr_image/',
+              accessMode: HtmlShareAccessMode.Public,
+              status: HtmlShareStatus.Live,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      },
+      'shr_image',
+      {
+        archivePath,
+        sourceType: HtmlShareSourceType.ImageFile,
+        clientSourceKey: 'image-source-key',
+        sessionId: 'session-1',
+        artifactId: 'artifact-image-1',
+        title: 'Image',
+        entryFile: 'image.png',
+        accessMode: HtmlShareAccessMode.Public,
+        sourceSha256: 'hash',
+      },
+    );
+
+    expect(requestedForm).not.toBeNull();
+    expect(requestedForm!.get('sourceType')).toBe(HtmlShareSourceType.ImageFile);
+    expect(requestedForm!.get('accessMode')).toBe(HtmlShareAccessMode.Public);
+    expect(requestedForm!.get('entryFile')).toBe('image.png');
+    expect(result.success).toBe(true);
+    expect(result.accessMode).toBe(HtmlShareAccessMode.Public);
   });
 
   test('updates share access mode without uploading files', async () => {

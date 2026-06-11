@@ -236,6 +236,7 @@ export async function updateHtmlShare(
 ): Promise<HtmlShareCreateResult> {
   const buffer = await fs.promises.readFile(input.archivePath);
   const form = new FormData();
+  form.set('sourceType', input.sourceType);
   appendHtmlShareFormData(form, input, buffer);
 
   const response = await fetchWithAuth(`${serverBaseUrl}/api/html-shares/${encodeURIComponent(shareId)}`, {
