@@ -1552,6 +1552,7 @@ function createActiveTurn(sessionId: string, sessionKey: string, runId: string) 
     sessionId,
     sessionKey,
     runId,
+    model: '',
     turnToken: 1,
     startedAtMs: 1,
     knownRunIds: new Set([runId]),
@@ -1560,6 +1561,7 @@ function createActiveTurn(sessionId: string, sessionKey: string, runId: string) 
     currentAssistantSegmentText: '',
     currentText: '',
     agentAssistantTextLength: 0,
+    hasSeenAgentAssistantStream: false,
     currentContentText: '',
     currentContentBlocks: [],
     sawNonTextContentBlocks: false,
@@ -1577,6 +1579,64 @@ function createActiveTurn(sessionId: string, sessionKey: string, runId: string) 
     bufferedAgentPayloads: [],
   };
 }
+
+test('stopSession finalizes streamed assistant metadata with the active model', () => {
+  const model = 'lobsterai-server/qwen3.6-plus';
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },
+    {
+      id: 'msg-2',
+      type: 'assistant',
+      content: 'partial',
+      timestamp: 2,
+      metadata: { isStreaming: true, isFinal: false },
+    },
+  ]);
+  session.modelOverride = model;
+  session.status = 'running';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const abortSpy = vi.fn(async () => ({}));
+  const messageUpdateSpy = vi.fn();
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: abortSpy,
+  };
+  adapter.on('messageUpdate', messageUpdateSpy);
+
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const turn = createActiveTurn(session.id, sessionKey, 'run-stop');
+  turn.model = model;
+  turn.assistantMessageId = 'msg-2';
+  turn.currentAssistantSegmentText = 'partial answer';
+  adapter.activeTurns.set(session.id, turn);
+
+  adapter.stopSession(session.id);
+
+  const assistantMessage = session.messages.find((message) => message.id === 'msg-2');
+  expect(assistantMessage?.content).toBe('partial answer');
+  expect(assistantMessage?.metadata).toMatchObject({
+    isStreaming: false,
+    isFinal: true,
+    model,
+  });
+  expect(messageUpdateSpy).toHaveBeenCalledWith(
+    session.id,
+    'msg-2',
+    'partial answer',
+    expect.objectContaining({
+      isStreaming: false,
+      isFinal: true,
+      model,
+    }),
+  );
+  expect(abortSpy).toHaveBeenCalledWith('chat.abort', {
+    sessionKey,
+    runId: 'run-stop',
+  });
+  expect(session.status).toBe('idle');
+});
 
 test('reconcileWithHistory: already in sync — skips replace', async () => {
   const { session, store, getReplaceCallCount } = createReconcileStore([

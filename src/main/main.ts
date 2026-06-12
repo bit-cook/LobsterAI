@@ -3185,7 +3185,10 @@ if (!gotTheLock) {
   };
 
   ipcMain.on('log:fromRenderer', (_event, level: string, tag: string, message: string) => {
-    const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+    const fn = level === 'error' ? console.error
+      : level === 'warn' ? console.warn
+        : level === 'debug' ? console.debug
+          : console.log;
     fn(`[Renderer][${tag}] ${message}`);
   });
 

@@ -212,6 +212,12 @@ class CoworkService {
       if (metadata?.isFinal !== true && session?.status !== 'completed') {
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
       }
+      if (metadata?.isFinal === true && typeof metadata.model === 'string' && metadata.model.trim()) {
+        this.logDiagnostic(
+          'debug',
+          `received final message metadata for session ${sessionId}, message ${messageId}, model ${metadata.model}`,
+        );
+      }
       store.dispatch(updateMessageContent({ sessionId, messageId, content, metadata }));
     });
     this.streamListenerCleanups.push(messageUpdateCleanup);
