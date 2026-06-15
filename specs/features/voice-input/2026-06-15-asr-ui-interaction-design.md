@@ -22,32 +22,32 @@
 
 ### 场景 1: 未登录用户点击听写
 
-**Given** 用户未登录  
-**When** 点击听写按钮  
+**Given** 用户未登录
+**When** 点击听写按钮
 **Then** 弹出登录/权益提示，不发起 ASR 请求。
 
 ### 场景 2: 登录用户首次点击听写
 
-**Given** 用户已登录，ASR 额度状态未知  
-**When** 点击听写按钮  
+**Given** 用户已登录，ASR 额度状态未知
+**When** 点击听写按钮
 **Then** 发起实时 ASR 会话请求；成功后记录 `usedSecondsToday`、`remainingSecondsToday`、`limitSecondsToday`。
 
 ### 场景 3: ASR 额度已用完
 
-**Given** 用户点击听写后服务端返回 `DailyLimitExceeded`，或录音中服务端报告额度耗尽  
-**When** 前端收到错误  
+**Given** 用户点击听写后服务端返回 `DailyLimitExceeded`，或录音中服务端报告额度耗尽
+**When** 前端收到错误
 **Then** 记录当天 ASR 状态为 `exhausted`，展示额度用完弹窗，按钮呈禁用样式但仍可点击再次展示提示。
 
 ### 场景 4: 应用跨日保持打开
 
-**Given** 前一天 ASR 状态为 `exhausted`  
-**When** 用户第二天再次进入或点击听写入口  
+**Given** 前一天 ASR 状态为 `exhausted`
+**When** 用户第二天再次进入或点击听写入口
 **Then** 前端发现本地日期变化，懒重置为 `unknown`，允许用户再次点击并由服务端校准真实额度。
 
 ### 场景 5: 录音中点击发送
 
-**Given** 用户正在听写，输入框内已有实时识别内容  
-**When** 用户直接点击发送按钮  
+**Given** 用户正在听写，输入框内已有实时识别内容
+**When** 用户直接点击发送按钮
 **Then** 前端先结束听写并等待最终识别结果，再按现有提交流程发送内容。
 
 ## 3. 功能需求
