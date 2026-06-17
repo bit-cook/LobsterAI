@@ -364,6 +364,7 @@ type ActiveTurn = {
   runId: string;
   model: string;
   turnToken: number;
+  planMode: boolean;
   /** Timestamp when this turn was created (for abort diagnostics). */
   startedAtMs: number;
   firstResponseTiming: FirstResponseTiming;
@@ -447,6 +448,50 @@ type ActiveTurn = {
   allowRecentlyClosedRunRetryReopenOnCleanup?: boolean;
   suppressRecentlyClosedRunIdsOnCleanup?: boolean;
 };
+
+const PLAN_MODE_MARKER = '# Plan Mode';
+const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
+  'write',
+  'edit',
+  'apply_patch',
+  'exec',
+  'bash',
+]);
+
+function isPlanModeSystemPrompt(systemPrompt: string): boolean {
+  return systemPrompt.includes(PLAN_MODE_MARKER);
+}
+
+function getStringArg(args: unknown, key: string): string {
+  if (!isRecord(args)) return '';
+  const value = args[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function getPlanModeBlockedToolReason(toolNameRaw: string, args: unknown): string | null {
+  const toolName = toolNameRaw.trim().toLowerCase();
+  if (PLAN_MODE_BLOCKED_TOOL_NAMES.has(toolName)) {
+    return `blocked mutating tool ${toolNameRaw || 'Tool'}`;
+  }
+
+  if (toolName === 'read') {
+    const requestedPath = getStringArg(args, 'path');
+    if (/(^|[/\\])SKILL\.md$/i.test(requestedPath)) {
+      return 'blocked skill loading in plan mode';
+    }
+  }
+
+  return null;
+}
+
+function buildPlanModeOutboundReminder(): string {
+  return [
+    '[Plan Mode reminder]',
+    'Plan Mode is active for this turn.',
+    'Do not implement, create, modify, write, edit, run shell commands, or load SKILL.md files.',
+    'Return only one concise plan wrapped in <proposed_plan> and </proposed_plan> tags.',
+  ].join('\n');
+}
 
 type FirstResponseTiming = {
   turnStartedAtMs: number;
@@ -3467,6 +3512,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       systemPromptText,
       buildMediaGenerationTurnInstruction(options.mediaSelection, hasMediaSkillActive),
     ].filter(p => p?.trim()).join('\n\n');
+    const planMode = isPlanModeSystemPrompt(outboundSystemPrompt);
 
     firstResponseTiming.promptBuildStartedAtMs = Date.now();
     const outboundMessage = await this.buildOutboundPrompt(
@@ -3500,6 +3546,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       runId,
       model: currentModel,
       turnToken,
+      planMode,
       knownRunIds: new Set([runId]),
       assistantMessageId: null,
       committedAssistantText: '',
@@ -3612,6 +3659,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     firstResponseTiming?: FirstResponseTiming,
   ): Promise<string> {
     const normalizedSystemPrompt = (systemPrompt ?? '').trim();
+    const planMode = isPlanModeSystemPrompt(normalizedSystemPrompt);
     const previousSystemPrompt = this.lastSystemPromptBySession.get(sessionId) ?? '';
     const shouldInjectSystemPrompt = Boolean(
       normalizedSystemPrompt
@@ -3668,6 +3716,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       if (prompt.trim()) {
         sections.push(`[Current user request]\n${prompt}`);
+      }
+      if (planMode) {
+        sections.push(buildPlanModeOutboundReminder());
       }
       return sections.join('\n\n');
     }
@@ -3726,6 +3777,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (prompt.trim()) {
       sections.push(`[Current user request]\n${prompt}`);
+    }
+    if (planMode) {
+      sections.push(buildPlanModeOutboundReminder());
     }
     return sections.join('\n\n');
   }
@@ -5524,6 +5578,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const toolNameRaw = typeof data.name === 'string' ? data.name.trim() : '';
     const toolName = toolNameRaw || 'Tool';
+
+    if (phase === 'start' && turn.planMode) {
+      const blockedReason = getPlanModeBlockedToolReason(toolNameRaw, data.args);
+      if (blockedReason) {
+        console.warn(
+          '[OpenClawRuntime] blocked a tool call because plan mode is active.',
+          `Session ${sessionId}.`,
+          `Tool ${toolName}.`,
+          `Reason ${blockedReason}.`,
+        );
+        const blockedMessage = this.store.addMessage(sessionId, {
+          type: 'system',
+          content: `Plan Mode blocked tool call: ${toolName}.`,
+          metadata: {
+            isError: true,
+            error: blockedReason,
+          },
+        });
+        this.emit('message', sessionId, blockedMessage);
+        this.stopSession(sessionId);
+        return;
+      }
+    }
 
     if (toolNameRaw.toLowerCase() === 'browser') {
       const isError = resolveToolEventIsError(data);
@@ -8074,6 +8151,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       runId: turnRunId,
       model: this.resolveCurrentModelForSession(sessionId),
       turnToken,
+      planMode: false,
       knownRunIds: new Set(runId ? [runId] : [turnRunId]),
       assistantMessageId: null,
       committedAssistantText: '',

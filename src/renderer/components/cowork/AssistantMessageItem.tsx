@@ -13,6 +13,7 @@ import {
   MEDIA_TOKEN_DISPLAY_RE,
   messageMetaClassName,
 } from './messageDisplayUtils';
+import { parseProposedPlanBlock } from './proposedPlanParser';
 
 // ── CopyButton ───────────────────────────────────────────────────────────────
 
@@ -108,7 +109,12 @@ const AssistantMessageItem: React.FC<{
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ImagePreviewSource | null>(null);
   const rawContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
-  const displayContent = rawContent.replace(MEDIA_TOKEN_DISPLAY_RE, '').trimEnd();
+  const proposedPlan = parseProposedPlanBlock(rawContent);
+  const displayContent = proposedPlan.visibleText.replace(MEDIA_TOKEN_DISPLAY_RE, '').trimEnd();
+  const copyContent = [
+    displayContent,
+    proposedPlan.planText,
+  ].filter((part): part is string => !!part).join('\n\n');
   const modelLabel = getMessageModelLabel(turnMetadata);
   const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
@@ -133,13 +139,31 @@ const AssistantMessageItem: React.FC<{
       onBlur={handleBlur}
     >
       <div className="text-foreground">
-        <MarkdownContent
-          content={displayContent}
-          className="prose dark:prose-invert max-w-none"
-          resolveLocalFilePath={resolveLocalFilePath}
-          showRevealInFolderAction
-          onImageClick={setExpandedImage}
-        />
+        {displayContent && (
+          <MarkdownContent
+            content={displayContent}
+            className="prose dark:prose-invert max-w-none"
+            resolveLocalFilePath={resolveLocalFilePath}
+            showRevealInFolderAction
+            onImageClick={setExpandedImage}
+          />
+        )}
+        {proposedPlan.planText && (
+          <div className={displayContent ? 'mt-3' : undefined}>
+            <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+              <div className="mb-2 text-xs font-medium uppercase text-primary">
+                {i18nService.t('coworkProposedPlanTitle')}
+              </div>
+              <MarkdownContent
+                content={proposedPlan.planText}
+                className="prose dark:prose-invert max-w-none"
+                resolveLocalFilePath={resolveLocalFilePath}
+                showRevealInFolderAction
+                onImageClick={setExpandedImage}
+              />
+            </div>
+          </div>
+        )}
       </div>
       {showCopyButton && (
         <div className={messageMetaClassName(isHovered)} aria-hidden={!isHovered}>
@@ -152,7 +176,7 @@ const AssistantMessageItem: React.FC<{
             />
           )}
           <CopyButton
-            content={displayContent}
+            content={copyContent}
             visible={isHovered}
           />
         </div>
