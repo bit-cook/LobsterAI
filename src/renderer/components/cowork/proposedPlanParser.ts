@@ -5,6 +5,8 @@ const FENCE_PATTERN = /^\s*(```|~~~)/;
 const PLAN_SECTION_LABELS = 'Summary|Implementation Approach|Key Changes|Validation|Assumptions or Questions';
 const PLAN_SECTION_LABEL_PATTERN = new RegExp(
   [
+    `^(#{1,6})\\s*(${PLAN_SECTION_LABELS})\\s*$`,
+    `^\\*\\*(${PLAN_SECTION_LABELS})\\*\\*\\s*$`,
     `^(#{1,6})\\s*(${PLAN_SECTION_LABELS})(?:\\*\\*)?(?:\\s*[:：])?\\s+(.+)$`,
     `^\\*\\*(${PLAN_SECTION_LABELS})\\*\\*(?:\\s*[:：])?\\s+(.+)$`,
     `^(?:\\*\\*)?(${PLAN_SECTION_LABELS})(?:\\*\\*)?\\s*[:：](?:\\*\\*)?\\s+(.+)$`,
@@ -47,7 +49,7 @@ const splitInlinePlanSectionLabels = (line: string): string[] => line
   })
   .split('\n');
 
-const readPlanSectionMatch = (line: string): { headingMarker?: string; label: string; body: string } | null => {
+const readPlanSectionMatch = (line: string): { headingMarker?: string; label: string; body?: string } | null => {
   const match = PLAN_SECTION_LABEL_PATTERN.exec(line);
   if (!match) return null;
 
@@ -55,7 +57,10 @@ const readPlanSectionMatch = (line: string): { headingMarker?: string; label: st
     ,
     headingMarker,
     headingLabel,
-    headingBody,
+    boldOnlyLabel,
+    bodyHeadingMarker,
+    bodyHeadingLabel,
+    bodyHeadingBody,
     boldLabel,
     boldBody,
     colonLabel,
@@ -64,11 +69,11 @@ const readPlanSectionMatch = (line: string): { headingMarker?: string; label: st
     connectorBody,
   ] = match;
 
-  const label = headingLabel ?? boldLabel ?? colonLabel ?? connectorLabel;
-  const body = headingBody ?? boldBody ?? colonBody ?? connectorBody;
-  if (!label || !body) return null;
+  const label = headingLabel ?? boldOnlyLabel ?? bodyHeadingLabel ?? boldLabel ?? colonLabel ?? connectorLabel;
+  const body = bodyHeadingBody ?? boldBody ?? colonBody ?? connectorBody;
+  if (!label) return null;
 
-  return { headingMarker, label, body };
+  return { headingMarker: headingMarker ?? bodyHeadingMarker, label, body };
 };
 
 const normalizeProposedPlanMarkdownWithFlag = (content: string): { text: string; didNormalize: boolean } => {
@@ -91,11 +96,8 @@ const normalizeProposedPlanMarkdownWithFlag = (content: string): { text: string;
 
         const { headingMarker, label, body } = match;
         didNormalize = true;
-        return [
-          `${headingMarker ?? '##'} ${label}`,
-          '',
-          body,
-        ];
+        if (!body) return [`${headingMarker ?? '##'} ${label}`];
+        return [`${headingMarker ?? '##'} ${label}`, '', body];
       });
     })
     .join('\n');

@@ -94,6 +94,28 @@ describe('parseProposedPlanBlock', () => {
       didNormalizePlanText: true,
     });
   });
+
+  test('normalizes bold-only section labels before bodies on the next line', () => {
+    expect(parseProposedPlanBlock([
+      '<proposed_plan>',
+      '**Summary**',
+      '为「麦田烘焙」制作一个温馨文艺风格的单页展示网站。',
+      '',
+      '**Implementation Approach**',
+      '1. 使用纯 HTML + CSS + JS 创建 index.html。',
+      '</proposed_plan>',
+    ].join('\n'))).toEqual({
+      visibleText: '',
+      planText: [
+        '## Summary',
+        '为「麦田烘焙」制作一个温馨文艺风格的单页展示网站。',
+        '',
+        '## Implementation Approach',
+        '1. 使用纯 HTML + CSS + JS 创建 index.html。',
+      ].join('\n'),
+      didNormalizePlanText: true,
+    });
+  });
 });
 
 describe('normalizeProposedPlanMarkdown', () => {
