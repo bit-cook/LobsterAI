@@ -37,6 +37,7 @@ import {
   clearDraftAttachments,
   clearDraftSelectedTextSnippets,
   type DraftAttachment,
+  PlanConfirmationState,
   removeDraftSelectedTextSnippet,
   setDraftAttachments,
   setDraftCollaborationMode,
@@ -44,6 +45,7 @@ import {
   setDraftPrompt,
   setDraftSelectedTextSnippets,
   setDraftSkillIds,
+  setPlanConfirmationHandled,
   updateCurrentSessionModelOverride,
 } from '../../store/slices/coworkSlice';
 import { setActiveKitIds, toggleActiveKit } from '../../store/slices/kitSlice';
@@ -57,6 +59,12 @@ import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import type { BrowserAnnotationPayload } from '../artifacts';
+import {
+  ACTIVE_CONTEXT_BADGE_BUTTON_CLASS,
+  ACTIVE_CONTEXT_BADGE_ICON_CLASS,
+  ACTIVE_CONTEXT_BADGE_ICON_WRAP_CLASS,
+  ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS,
+} from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
 import DefaultAgentIcon from '../icons/DefaultAgentIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -474,6 +482,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const draftCollaborationMode = useSelector(
     (state: RootState) => state.cowork.draftCollaborationModes[draftKey] || CoworkCollaborationMode.Default
   );
+  const planConfirmation = useSelector(
+    (state: RootState) => state.cowork.planConfirmations[draftKey]
+  );
   const isPlanMode = draftCollaborationMode === CoworkCollaborationMode.Plan;
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
@@ -499,7 +510,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large' || isCompact;
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext || isCompact);
-  const hasActiveContext = hasActiveSkills || hasActiveKits;
+  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode;
   const hasAttachments = attachments.length > 0;
   const minHeight = isCompact
     ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
@@ -623,8 +634,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   useEffect(() => {
     const handleFocusInput = (event: Event) => {
-      const detail = (event as CustomEvent<{ clear?: boolean; text?: string }>).detail;
+      const detail = (event as CustomEvent<{ clear?: boolean; resetCollaborationMode?: boolean; text?: string }>).detail;
       const shouldClear = detail?.clear ?? true;
+      if (detail?.resetCollaborationMode) {
+        dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
+      }
       if (detail?.text !== undefined) {
         setValue(detail.text);
         dispatch(clearDraftAttachments(draftKey));
@@ -636,7 +650,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         dispatch(clearDraftSelectedTextSnippets(draftKey));
         dispatch(setDraftKitIds({ draftKey, kitIds: [] }));
         dispatch(setActiveKitIds([]));
-        dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
         setImageVisionHint(false);
       }
       requestAnimationFrame(() => {
@@ -865,6 +878,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const exitsPlanModeForImplementation = isPlanMode
       && isPlanImplementationApproval(trimmedValue);
+    const awaitingPlanConfirmation = planConfirmation?.state === PlanConfirmationState.Awaiting
+      ? planConfirmation
+      : null;
     const effectivePlanMode = isPlanMode && !exitsPlanModeForImplementation;
     const effectiveCollaborationMode = effectivePlanMode
       ? CoworkCollaborationMode.Plan
@@ -894,6 +910,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       logPromptModelSelection(
         'debug',
         `submitting prompt in plan mode for draft ${draftKey}; selected skill routing suppressed`
+      );
+    } else if (exitsPlanModeForImplementation) {
+      logPromptModelSelection(
+        'debug',
+        `exiting plan mode for approved implementation in draft ${draftKey}`,
       );
     }
 
@@ -1029,19 +1050,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       effectiveCollaborationMode,
     );
     if (result === false) return;
-    if (exitsPlanModeForImplementation) {
+    if (awaitingPlanConfirmation) {
+      dispatch(setPlanConfirmationHandled({
+        sessionId: draftKey,
+        messageId: awaitingPlanConfirmation.messageId,
+      }));
       logPromptModelSelection(
         'debug',
-        `exited plan mode after submitting approved implementation in draft ${draftKey}`,
+        exitsPlanModeForImplementation
+          ? `direct input confirmed proposed plan ${awaitingPlanConfirmation.messageId} for draft ${draftKey}`
+          : `direct input adjusted proposed plan ${awaitingPlanConfirmation.messageId} for draft ${draftKey}`,
       );
+    }
+    if (exitsPlanModeForImplementation) {
+      dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
     }
     setValue('');
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
     dispatch(clearDraftSelectedTextSnippets(draftKey));
-    dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
     setImageVisionHint(false);
-  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode]);
+  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
@@ -1491,13 +1520,35 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       draftKey,
       mode: nextMode,
     }));
+    if (nextMode === CoworkCollaborationMode.Default && planConfirmation?.state === PlanConfirmationState.Awaiting) {
+      dispatch(setPlanConfirmationHandled({
+        sessionId: draftKey,
+        messageId: planConfirmation.messageId,
+      }));
+    }
     if (nextMode === CoworkCollaborationMode.Plan) {
       void reportYdAnalyzer({
         action: LogReporterAction.PlanModeEnabled,
         entry: LogReporterEntry.PromptToolsMenu,
       });
     }
-  }, [dispatch, draftKey, isPlanMode]);
+  }, [dispatch, draftKey, isPlanMode, planConfirmation?.messageId, planConfirmation?.state]);
+
+  const handleDisablePlanMode = useCallback((event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (!isPlanMode) return;
+    logPromptModelSelection('debug', `plan mode disabled from active badge for draft ${draftKey}`);
+    dispatch(setDraftCollaborationMode({
+      draftKey,
+      mode: CoworkCollaborationMode.Default,
+    }));
+    if (planConfirmation?.state === PlanConfirmationState.Awaiting) {
+      dispatch(setPlanConfirmationHandled({
+        sessionId: draftKey,
+        messageId: planConfirmation.messageId,
+      }));
+    }
+  }, [dispatch, draftKey, isPlanMode, planConfirmation?.messageId, planConfirmation?.state]);
 
   const handleRemoveAttachment = useCallback((path: string) => {
     dispatch(setDraftAttachments({
@@ -1894,6 +1945,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </div>
   ) : null;
 
+  const planModeBadge = isPlanMode ? (
+    <button
+      type="button"
+      onClick={handleDisablePlanMode}
+      className={ACTIVE_CONTEXT_BADGE_BUTTON_CLASS}
+      title={i18nService.t('coworkClearPlanMode')}
+      aria-label={i18nService.t('coworkClearPlanMode')}
+    >
+      <span className={ACTIVE_CONTEXT_BADGE_ICON_WRAP_CLASS}>
+        <ClipboardDocumentCheckIcon className={ACTIVE_CONTEXT_BADGE_ICON_CLASS} />
+        <XMarkIcon className={ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS} />
+      </span>
+      <span className="min-w-0 truncate">
+        {i18nService.t('coworkPlanMode')}
+      </span>
+    </button>
+  ) : null;
+
   const compactAttachmentPreview = hasAttachments ? (
     <div className="mb-2 max-h-[164px] overflow-y-auto rounded-xl bg-black/[0.035] p-2 dark:bg-white/[0.055]">
       {attachmentPreviewContent}
@@ -1909,24 +1978,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     >
       <ActiveSkillBadge />
       <ActiveKitBadge />
-      {isPlanMode && (
-        <span className="inline-flex h-6 items-center gap-1 rounded-md bg-primary/10 px-2 text-xs font-medium text-primary">
-          <ClipboardDocumentCheckIcon className="h-3.5 w-3.5" />
-          {i18nService.t('coworkPlanMode')}
-        </span>
-      )}
-    </div>
-  ) : isLarge && isPlanMode ? (
-    <div
-      className={`flex cursor-text flex-wrap items-center gap-x-2 gap-y-1 px-4 ${isCompact ? 'pt-2' : 'pt-4'}`}
-      onClick={() => {
-        if (!disabled && !voiceInputLocksEditing) textareaRef.current?.focus();
-      }}
-    >
-      <span className="inline-flex h-6 items-center gap-1 rounded-md bg-primary/10 px-2 text-xs font-medium text-primary">
-        <ClipboardDocumentCheckIcon className="h-3.5 w-3.5" />
-        {i18nService.t('coworkPlanMode')}
-      </span>
+      {planModeBadge}
     </div>
   ) : null;
   const textareaPlaceholder = placeholder;

@@ -16,6 +16,9 @@ interface ProposedPlanBlockProps {
   content: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   onImageClick: (image: ImagePreviewSource) => void;
+  showConfirmationActions?: boolean;
+  onConfirmExecution?: () => void;
+  onAdjustPlan?: () => void;
 }
 
 const ACTION_FEEDBACK_DURATION_MS = 1500;
@@ -24,6 +27,9 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
   content,
   resolveLocalFilePath,
   onImageClick,
+  showConfirmationActions = false,
+  onConfirmExecution,
+  onAdjustPlan,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -125,6 +131,29 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
             showRevealInFolderAction
             onImageClick={onImageClick}
           />
+        </div>
+      )}
+      {showConfirmationActions && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-primary/10 px-4 py-3 sm:px-5">
+          <div className="text-sm font-medium text-secondary">
+            {i18nService.t('coworkPlanConfirmationReady')}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onConfirmExecution}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              {i18nService.t('coworkPlanConfirmExecute')}
+            </button>
+            <button
+              type="button"
+              onClick={onAdjustPlan}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              {i18nService.t('coworkPlanAdjust')}
+            </button>
+          </div>
         </div>
       )}
     </section>

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
@@ -47,6 +47,9 @@ const AssistantMessageItem: React.FC<{
   showCopyButton?: boolean;
   onFork?: (messageId: string) => void;
   turnMetadata?: CoworkMessageMetadata | null;
+  planConfirmationMessageId?: string | null;
+  onConfirmPlan?: (messageId: string) => void;
+  onAdjustPlan?: (messageId: string) => void;
 }> = ({
   message,
   resolveLocalFilePath,
@@ -54,6 +57,9 @@ const AssistantMessageItem: React.FC<{
   showCopyButton = false,
   onFork,
   turnMetadata,
+  planConfirmationMessageId,
+  onConfirmPlan,
+  onAdjustPlan,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ImagePreviewSource | null>(null);
@@ -65,6 +71,15 @@ const AssistantMessageItem: React.FC<{
     proposedPlan.planText,
   ].filter((part): part is string => Boolean(part)).join('\n\n');
   const modelLabel = getMessageModelLabel(turnMetadata);
+  const showPlanConfirmationActions = planConfirmationMessageId === message.id;
+  useEffect(() => {
+    if (!proposedPlan.didNormalizePlanText) return;
+    window.electron?.log?.fromRenderer?.(
+      'debug',
+      'AssistantMessageItem',
+      `Normalized inline section labels in proposed plan ${message.id}.`,
+    );
+  }, [message.id, proposedPlan.didNormalizePlanText]);
   const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
@@ -121,6 +136,9 @@ const AssistantMessageItem: React.FC<{
               content={proposedPlan.planText}
               resolveLocalFilePath={resolveLocalFilePath}
               onImageClick={setExpandedImage}
+              showConfirmationActions={showPlanConfirmationActions}
+              onConfirmExecution={showPlanConfirmationActions ? () => onConfirmPlan?.(message.id) : undefined}
+              onAdjustPlan={showPlanConfirmationActions ? () => onAdjustPlan?.(message.id) : undefined}
             />
           </div>
         )}

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 
-import { parseProposedPlanBlock } from './proposedPlanParser';
+import {
+  normalizeProposedPlanMarkdown,
+  parseProposedPlanBlock,
+} from './proposedPlanParser';
 
 describe('parseProposedPlanBlock', () => {
   test('extracts a proposed plan and removes it from visible text', () => {
@@ -36,5 +39,61 @@ describe('parseProposedPlanBlock', () => {
       visibleText: '',
       planText: '- Step',
     });
+  });
+
+  test('normalizes inline section labels in proposed plans', () => {
+    expect(parseProposedPlanBlock('<proposed_plan>\nSummary: Build the page.\n</proposed_plan>')).toEqual({
+      visibleText: '',
+      planText: '## Summary\n\nBuild the page.',
+      didNormalizePlanText: true,
+    });
+  });
+
+  test('normalizes section labels followed by Chinese connector text', () => {
+    expect(parseProposedPlanBlock('<proposed_plan>\nSummary为「麦田烘焙」制作单页展示网页。\n</proposed_plan>')).toEqual({
+      visibleText: '',
+      planText: '## Summary\n\n为「麦田烘焙」制作单页展示网页。',
+      didNormalizePlanText: true,
+    });
+  });
+});
+
+describe('normalizeProposedPlanMarkdown', () => {
+  test('moves known section bodies to the line after the heading', () => {
+    expect(normalizeProposedPlanMarkdown([
+      '**Summary:** 生成科普内容。',
+      '## Implementation Approach: Use structured sections.',
+      '**Summary** 为客户创建单页网站。',
+      'Key Changes: Add examples.',
+    ].join('\n'))).toBe([
+      '## Summary',
+      '',
+      '生成科普内容。',
+      '## Implementation Approach',
+      '',
+      'Use structured sections.',
+      '## Summary',
+      '',
+      '为客户创建单页网站。',
+      '## Key Changes',
+      '',
+      'Add examples.',
+    ].join('\n'));
+  });
+
+  test('does not normalize labels inside fenced code blocks', () => {
+    expect(normalizeProposedPlanMarkdown([
+      '```md',
+      'Summary: Keep this literal.',
+      '```',
+      'Validation: Run tests.',
+    ].join('\n'))).toBe([
+      '```md',
+      'Summary: Keep this literal.',
+      '```',
+      '## Validation',
+      '',
+      'Run tests.',
+    ].join('\n'));
   });
 });

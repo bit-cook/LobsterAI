@@ -1259,6 +1259,7 @@ interface IElectronAPI {
   scheduledTasks: {
     list: () => Promise<{
       success: boolean;
+      ready?: boolean;
       tasks?: import('../../scheduledTask/types').ScheduledTask[];
       error?: string;
     }>;
@@ -1309,6 +1310,7 @@ interface IElectronAPI {
       filter?: import('../../scheduledTask/types').RunFilter,
     ) => Promise<{
       success: boolean;
+      ready?: boolean;
       runs?: import('../../scheduledTask/types').ScheduledTaskRunWithName[];
       error?: string;
     }>;

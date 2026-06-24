@@ -198,6 +198,9 @@ const AssistantTurnBlock: React.FC<{
   onOpenLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
   onForkMessage?: (messageId: string) => void;
+  planConfirmationMessageId?: string | null;
+  onConfirmPlan?: (messageId: string) => void;
+  onAdjustPlan?: (messageId: string) => void;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
 }> = ({
@@ -208,6 +211,9 @@ const AssistantTurnBlock: React.FC<{
   onOpenLocalService,
   onOpenHtmlFile,
   onForkMessage,
+  planConfirmationMessageId,
+  onConfirmPlan,
+  onAdjustPlan,
   showTypingIndicator = false,
   showCopyButtons = true,
 }) => {
@@ -407,6 +413,9 @@ const AssistantTurnBlock: React.FC<{
                     showCopyButton={isLastAssistant}
                     onFork={isLastAssistant ? onForkMessage : undefined}
                     turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
+                    planConfirmationMessageId={planConfirmationMessageId}
+                    onConfirmPlan={onConfirmPlan}
+                    onAdjustPlan={onAdjustPlan}
                   />
                 );
               }
