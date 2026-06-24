@@ -26,6 +26,8 @@ export const LogReporterAction = {
   BrowserSettingChanged: 'lobsterai_browser_setting_changed',
   CustomModelConnectionTested: 'lobsterai_custom_model_connection_tested',
   CustomModelSettingsSaved: 'lobsterai_custom_model_settings_saved',
+  EmailSkillConnectionTested: 'lobsterai_email_skill_connection_tested',
+  EmailSkillSettingsSaved: 'lobsterai_email_skill_settings_saved',
   ExpertKitSelected: 'lobsterai_expert_kit_selected',
   GeneralSettingChanged: 'lobsterai_general_setting_changed',
   ImConnectionTested: 'lobsterai_im_connection_tested',

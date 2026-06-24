@@ -362,6 +362,52 @@ export const LogReporterActionPrefix = {
   - 不上传具体 hostname、URL、CDP URL、浏览器可执行路径、extraArgs、代理地址、测试页面、浏览历史或网页内容。
   - `blockedHostnameCount` 只用于观察配置规模，不表达用户访问或屏蔽了哪些具体站点。
 
+#### 2.4.19 `lobsterai_email_skill_settings_saved`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> 邮箱」修改 `imap-smtp-email` 技能配置，并且自动保存成功后发送。保存失败或配置无变化不发送。
+- 事件含义：统计邮箱技能配置的使用情况和配置完成度，不记录账号、密码或服务器详情。
+- 发送口径：
+  - 邮箱配置页当前采用 blur 后自动保存；日志只在持久化成功后发送。
+  - 同一次自动保存只发送一条摘要事件，不按每个字段逐条发送。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_email`。
+  - `skillId`：string，当前固定为 `imap-smtp-email`。
+  - `provider`：string，邮箱服务商摘要。当前取值包括 `gmail`、`outlook`、`163`、`126`、`qq`、`custom` 或空字符串。
+  - `hasEmail`：boolean，保存后是否填写了邮箱账号。
+  - `hasPassword`：boolean，保存后是否填写了密码或授权码。
+  - `hasImapHost`：boolean，保存后是否存在 IMAP Host。
+  - `hasSmtpHost`：boolean，保存后是否存在 SMTP Host。
+  - `imapTlsEnabled`：boolean，保存后是否启用 IMAP TLS。
+  - `smtpSslEnabled`：boolean，保存后是否启用 SMTP SSL。
+  - `allowInsecureCert`：boolean，保存后是否允许不安全证书。
+  - `mailboxCustomized`：boolean，保存后的默认 mailbox 是否不是 `INBOX`。
+  - `changedKeys`：string，本次变化类型的去重列表，使用逗号分隔。当前取值包括 `provider`、`email`、`password`、`imap_host`、`imap_port`、`imap_tls`、`smtp_host`、`smtp_port`、`smtp_secure`、`allow_insecure_cert`、`mailbox`。
+- 隐私边界：
+  - 不上传邮箱地址、密码/授权码、IMAP/SMTP host、端口、mailbox 名称或任何邮件内容。
+  - `provider` 只表达预置服务商分类；无法识别时统一为 `custom` 或空字符串。
+
+#### 2.4.20 `lobsterai_email_skill_connection_tested`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> 邮箱」点击连接测试，并得到测试结果或测试失败后发送。用户未点击测试不发送。
+- 事件含义：统计邮箱技能连通性测试的使用情况和通过率。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_email`。
+  - `skillId`：string，当前固定为 `imap-smtp-email`。
+  - `provider`：string，测试时的邮箱服务商摘要。当前取值包括 `gmail`、`outlook`、`163`、`126`、`qq`、`custom` 或空字符串。
+  - `result`：string，测试结果。当前取值为 `pass` 或 `fail`。
+  - `imapResult`：string，IMAP 测试项结果。当前取值为 `pass`、`fail` 或空字符串。
+  - `smtpResult`：string，SMTP 测试项结果。当前取值为 `pass`、`fail` 或空字符串。
+  - `checkCount`：number，测试项数量。
+  - `hasEmail`：boolean，测试时是否填写了邮箱账号。
+  - `hasPassword`：boolean，测试时是否填写了密码或授权码。
+  - `hasImapHost`：boolean，测试时是否存在 IMAP Host。
+  - `hasSmtpHost`：boolean，测试时是否存在 SMTP Host。
+- 隐私边界：
+  - 不上传邮箱地址、密码/授权码、IMAP/SMTP host、端口、测试错误详情、测试项 message 或 AI 诊断 prompt。
+  - 失败只通过 `result=fail` 和测试项级别表达，不上传原始异常文本。
+
 ### 2.5 请求流程
 
 ```text
