@@ -56,6 +56,9 @@ const getOpenClawProviderIdForConfig = (
   if (providerName === ProviderName.OpenAI && providerConfig.authType === 'oauth') {
     return OpenClawProviderId.OpenAICodex;
   }
+  if (providerName === ProviderName.Minimax && providerConfig.authType === 'oauth') {
+    return OpenClawProviderId.MinimaxPortal;
+  }
   return ProviderRegistry.getOpenClawProviderId(providerName);
 };
 

@@ -753,6 +753,11 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
     resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
     normalizeBaseUrl: stripChatCompletionsSuffix,
   },
+  [`${ProviderName.Minimax}:oauth`]: {
+    providerId: OpenClawProviderId.MinimaxPortal,
+    resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
+    normalizeBaseUrl: stripChatCompletionsSuffix,
+  },
 
   [ProviderName.Youdaozhiyun]: {
     providerId: OpenClawProviderId.Youdaozhiyun,
@@ -816,6 +821,9 @@ const resolveDescriptor = (
 ): ProviderDescriptor => {
   if (providerName === ProviderName.OpenAI && authType === 'oauth') {
     return PROVIDER_REGISTRY[`${ProviderName.OpenAI}:oauth`];
+  }
+  if (providerName === ProviderName.Minimax && authType === 'oauth') {
+    return PROVIDER_REGISTRY[`${ProviderName.Minimax}:oauth`];
   }
   if (codingPlanEnabled) {
     const compositeKey = `${providerName}:codingPlan`;
