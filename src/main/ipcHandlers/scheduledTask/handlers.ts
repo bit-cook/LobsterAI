@@ -43,6 +43,7 @@ export interface ScheduledTaskHandlerDeps {
   } | null;
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
+    connectGatewayIfNeeded: () => Promise<void>;
     fetchSessionByKey: (sessionKey: string) => Promise<unknown>;
   } | null;
 }
@@ -99,15 +100,23 @@ async function applyAnnounceDeliveryNormalization(
   }
 }
 
+async function ensureScheduledTaskGatewayClient(
+  getOpenClawRuntimeAdapter: ScheduledTaskHandlerDeps['getOpenClawRuntimeAdapter'],
+): Promise<boolean> {
+  const adapter = getOpenClawRuntimeAdapter();
+  if (!adapter) return false;
+  if (adapter.getGatewayClient()) return true;
+
+  await adapter.connectGatewayIfNeeded();
+  return Boolean(adapter.getGatewayClient());
+}
+
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
   const { getCronJobService, getIMGatewayManager, getOpenClawRuntimeAdapter } = deps;
 
   ipcMain.handle(ScheduledTaskIpc.List, async () => {
     try {
-      // If OpenClaw gateway is not connected yet, return empty list immediately
-      // to avoid blocking the renderer init. Tasks will be loaded later via the
-      // onRefresh listener when the gateway becomes available.
-      if (!getOpenClawRuntimeAdapter()?.getGatewayClient()) {
+      if (!(await ensureScheduledTaskGatewayClient(getOpenClawRuntimeAdapter))) {
         return { success: true, ready: false, tasks: [] };
       }
       const tasks = await getCronJobService().listJobs();
@@ -253,7 +262,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
       filter?: import('../../../scheduledTask/types').RunFilter,
     ) => {
       try {
-        if (!getOpenClawRuntimeAdapter()?.getGatewayClient()) {
+        if (!(await ensureScheduledTaskGatewayClient(getOpenClawRuntimeAdapter))) {
           return { success: true, ready: false, runs: [] };
         }
         const runs = await getCronJobService().listAllRuns(limit, offset, filter);
