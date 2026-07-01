@@ -1660,6 +1660,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: '保存',
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
+    mcpAuthorized: '已授权',
     mcpMarketplace: '市场',
     mcpCustom: '自定义',
     mcpCustomDescription: '手动配置 MCP 服务器',
@@ -4348,6 +4349,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: 'Save',
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
+    mcpAuthorized: 'Authorized',
     mcpMarketplace: 'Marketplace',
     mcpCustom: 'Custom',
     mcpCustomDescription: 'Manually configure an MCP server',

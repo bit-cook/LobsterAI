@@ -1,4 +1,4 @@
-import { McpRegistryEntry } from '../types/mcp';
+import { McpRegistryEntry, McpRegistryEntryKind } from '../types/mcp';
 
 /**
  * Built-in MCP server registry.
@@ -170,6 +170,8 @@ export const mcpRegistry: McpRegistryEntry[] = [
     command: 'https://agent.qcc.com/mcp',
     defaultArgs: ['6 servers'],
     oauthProvider: 'qichacha',
+    kind: McpRegistryEntryKind.Bundle,
+    marketplacePosition: 4,
   },
 ];
 

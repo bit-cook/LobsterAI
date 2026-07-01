@@ -20,6 +20,7 @@ function convertMarketplaceToRegistry(
     defaultArgs: s.defaultArgs,
     requiredEnvKeys: s.requiredEnvKeys,
     optionalEnvKeys: s.optionalEnvKeys,
+    kind: s.kind,
   }));
 }
 
