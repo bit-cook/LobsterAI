@@ -9,6 +9,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import { showToast } from '../../utils/localFileActions';
 import MarkdownContent from '../MarkdownContent';
+import {
+  bucketLength,
+  getMessageLineCount,
+  reportConversationBlockAction,
+} from './conversationAnalytics';
 import type { ImagePreviewSource } from './ImagePreviewModal';
 import { MessageActionButton, MessageCopyButton } from './MessageActionButton';
 
@@ -16,14 +21,26 @@ interface ProposedPlanBlockProps {
   content: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   onImageClick: (image: ImagePreviewSource) => void;
+  showConfirmationActions?: boolean;
+  onConfirmExecution?: () => void;
+  onAdjustPlan?: () => void;
 }
 
 const ACTION_FEEDBACK_DURATION_MS = 1500;
+
+const getPlanAnalyticsParams = (content: string) => ({
+  planLength: content.length,
+  planLengthBucket: bucketLength(content.length),
+  planLineCount: getMessageLineCount(content),
+});
 
 const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
   content,
   resolveLocalFilePath,
   onImageClick,
+  showConfirmationActions = false,
+  onConfirmExecution,
+  onAdjustPlan,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -34,6 +51,7 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
   }, []);
 
   const handleDownload = useCallback(() => {
+    const analyticsParams = getPlanAnalyticsParams(content);
     let objectUrl: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     try {
@@ -55,6 +73,14 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
         'ProposedPlanBlock',
         'Downloaded the proposed plan as a Markdown file.',
       );
+      reportConversationBlockAction({
+        actionType: 'plan_download',
+        blockType: 'proposed_plan',
+        params: {
+          result: 'success',
+          ...analyticsParams,
+        },
+      });
     } catch (error) {
       console.warn('[ProposedPlanBlock] failed to download the proposed plan:', error);
       window.electron?.log?.fromRenderer?.(
@@ -62,6 +88,14 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
         'ProposedPlanBlock',
         'Failed to download the proposed plan as a Markdown file.',
       );
+      reportConversationBlockAction({
+        actionType: 'plan_download',
+        blockType: 'proposed_plan',
+        params: {
+          result: 'failed',
+          ...analyticsParams,
+        },
+      });
       showToast(i18nService.t('coworkProposedPlanDownloadFailed'));
     } finally {
       anchor?.remove();
@@ -71,6 +105,37 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
       }
     }
   }, [content]);
+
+  const handleToggleExpanded = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setIsExpanded(value => {
+      const nextExpanded = !value;
+      reportConversationBlockAction({
+        actionType: nextExpanded ? 'plan_expand' : 'plan_collapse',
+        blockType: 'proposed_plan',
+        params: getPlanAnalyticsParams(content),
+      });
+      return nextExpanded;
+    });
+  }, [content]);
+
+  const handleConfirmExecution = useCallback(() => {
+    reportConversationBlockAction({
+      actionType: 'plan_confirm_execute',
+      blockType: 'proposed_plan',
+      params: getPlanAnalyticsParams(content),
+    });
+    onConfirmExecution?.();
+  }, [content, onConfirmExecution]);
+
+  const handleAdjustPlan = useCallback(() => {
+    reportConversationBlockAction({
+      actionType: 'plan_adjust',
+      blockType: 'proposed_plan',
+      params: getPlanAnalyticsParams(content),
+    });
+    onAdjustPlan?.();
+  }, [content, onAdjustPlan]);
 
   const toggleLabel = i18nService.t(
     isExpanded ? 'coworkProposedPlanCollapse' : 'coworkProposedPlanExpand',
@@ -99,13 +164,20 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
               <ArrowDownTrayIcon className="h-4 w-4" />
             )}
           </MessageActionButton>
-          <MessageCopyButton content={content} />
+          <MessageCopyButton
+            content={content}
+            onCopy={(result) => reportConversationBlockAction({
+              actionType: 'plan_copy',
+              blockType: 'proposed_plan',
+              params: {
+                result,
+                ...getPlanAnalyticsParams(content),
+              },
+            })}
+          />
           <MessageActionButton
             label={toggleLabel}
-            onClick={(event) => {
-              event.stopPropagation();
-              setIsExpanded(value => !value);
-            }}
+            onClick={handleToggleExpanded}
             expanded={isExpanded}
           >
             {isExpanded ? (
@@ -125,6 +197,29 @@ const ProposedPlanBlock: React.FC<ProposedPlanBlockProps> = ({
             showRevealInFolderAction
             onImageClick={onImageClick}
           />
+        </div>
+      )}
+      {showConfirmationActions && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-primary/10 px-4 py-3 sm:px-5">
+          <div className="text-sm font-medium text-secondary">
+            {i18nService.t('coworkPlanConfirmationReady')}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleConfirmExecution}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              {i18nService.t('coworkPlanConfirmExecute')}
+            </button>
+            <button
+              type="button"
+              onClick={handleAdjustPlan}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              {i18nService.t('coworkPlanAdjust')}
+            </button>
+          </div>
         </div>
       )}
     </section>

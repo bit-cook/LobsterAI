@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { AgentIpcChannel } from '../shared/agent/constants';
+import { AppIpcChannel } from '../shared/app/constants';
+import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import {
@@ -382,6 +384,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:list', options),
     getSessionMessages: (options: { sessionId: string; limit?: number; offset?: number }) =>
       ipcRenderer.invoke('cowork:session:getMessages', options),
+    getSessionMessageRailIndex: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.GetSessionMessageRailIndex, sessionId),
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     compactContext: (sessionId: string) =>
@@ -704,16 +708,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(LocalWebServicesIpc.List, options) as Promise<LocalWebService[]>,
   },
   autoLaunch: {
-    get: () => ipcRenderer.invoke('app:getAutoLaunch'),
-    set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
+    get: () => ipcRenderer.invoke(AppSettingsIpc.GetAutoLaunch),
+    set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetAutoLaunch, enabled),
   },
   preventSleep: {
-    get: () => ipcRenderer.invoke('app:getPreventSleep'),
-    set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
+    get: () => ipcRenderer.invoke(AppSettingsIpc.GetPreventSleep),
+    set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetPreventSleep, enabled),
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+    getKeyfromAttribution: () => ipcRenderer.invoke(AppIpcChannel.GetKeyfromAttribution),
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
   appUpdate: {
@@ -924,8 +929,8 @@ contextBridge.exposeInMainWorld('electron', {
     countRuns: (taskId: string) => ipcRenderer.invoke(ScheduledTaskIpc.CountRuns, taskId),
     listAllRuns: (limit?: number, offset?: number, filter?: any) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ListAllRuns, limit, offset, filter),
-    resolveSession: (sessionKey: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey),
+    resolveSession: (input: string | { sessionId?: string | null; sessionKey?: string | null }) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, input),
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),

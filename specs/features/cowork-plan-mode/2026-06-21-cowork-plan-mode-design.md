@@ -24,12 +24,12 @@ LobsterAI Cowork 默认以执行任务为目标：模型可以读取项目、调
 ### 1.2 目标
 
 1. 在 Cowork 输入框加号弹层中提供“计划模式”开关，交互与现有附件、技能入口一致。
-2. 计划模式只影响当前提交轮次，不改变普通对话的默认行为。
+2. 计划模式状态保留在当前 draft/session 输入框上，直到用户手动关闭或明确确认执行，不改变新会话和普通对话的默认行为。
 3. 模型在计划模式下可以进行只读调研，但不能修改文件、数据库、Git 状态或系统状态。
 4. 模型最终输出决策完整、可执行、可审阅的计划，而不是一句前言或过度精简摘要。
 5. `<proposed_plan>` 作为机器可识别协议，不作为用户可见正文展示。
 6. 计划内容以独立计划卡片展示，并支持复制、下载、展开和收起。
-7. 用户明确批准计划并要求实现时，当前轮立即退出计划模式并恢复正常执行能力。
+7. 计划输出完成后进入“待确认”状态，用户明确批准计划并要求实现时，当前轮立即退出计划模式并恢复正常执行能力。
 8. 计划消息可以正常复制、分叉、持久化和恢复，不丢失计划正文。
 9. 普通对话、普通工具调用、技能选择、附件、媒体生成和历史消息展示不受计划模式实现影响。
 10. 兼容 macOS、Windows 和常见窗口尺寸，不新增数据库迁移和老用户升级风险。
@@ -61,11 +61,13 @@ LobsterAI Cowork 默认以执行任务为目标：模型可以读取项目、调
 执行与验证
 ```
 
-计划模式不是一个永久 session 属性。它是输入草稿上的 per-turn collaboration mode：
+计划模式不是全局永久属性。它是输入草稿/session 上的 collaboration mode：
 
-- 用户打开开关后，下一次提交按计划模式发送。
-- 计划提交成功后，草稿模式恢复默认值。
-- session 可以包含历史计划，但后续普通轮次不能自动继承计划约束。
+- 用户打开开关后，当前 draft/session 后续提交持续按计划模式发送。
+- 计划输出完成后，最新计划进入待确认状态，UI 提供“确认执行”和“调整方案”快捷操作。
+- 用户点击“调整方案”或直接输入补充/修改诉求时，继续按计划模式发送并重新生成计划。
+- 用户点击“确认执行”或直接输入明确执行意图时，当前提交切换为默认模式，恢复写工具和验证工具能力。
+- 用户手动关闭计划模式、新建会话或切换到新的空白 draft 时，清理对应 draft/session 的计划状态。
 - 用户说“按照计划实现吧”时，即使 UI 仍错误保留计划开关，Renderer 和 Main runtime 也必须双重兜底退出计划模式。
 
 ### 2.2 与 Codex 的对齐边界
@@ -110,13 +112,14 @@ LobsterAI 与 Codex 的实现不同：
 - 不执行计划完整性检测或 recovery。
 - 不改变技能、附件、媒体和工具权限流程。
 
-### INV-2: 计划提示仅当前轮有效
+### INV-2: 计划提示仅当前 runtime 请求有效
 
 - `# Plan Mode` 只用于当前 runtime 请求。
 - `cowork_sessions.system_prompt` 不得持久化计划模式提示。
 - 新 session 应持久化用户基础 system prompt，而不是本轮计划提示。
 - 继续旧 session 时，如果检测到历史版本错误持久化的计划提示，应清理并恢复基础配置。
 - `mergeCoworkSystemPrompt()` 必须幂等，不能重复拼接 Scheduled Tasks 等固定段落。
+- 计划模式 UI 状态可以保留在当前 draft/session，但不得把 Plan prompt 持久化为 session system prompt。
 
 ### INV-3: 批准实现必须退出计划模式
 
@@ -183,7 +186,7 @@ LobsterAI 与 Codex 的实现不同：
 **Given** 当前轮是计划模式  
 **When** 模型尝试 `write`、`edit`、`apply_patch`、`git branch`、`sed -i`、文件重定向或其他写操作  
 **Then** Main runtime 在收到 tool start 事件后立即 abort 当前 run  
-**And** UI 展示本地化的阻止原因  
+**And** UI 不展示可能干扰用户的内部阻止消息
 **And** 首次阻止后自动发起一次禁止使用工具的隐藏恢复请求，继续输出完整计划  
 **And** 同一 turn 再次尝试写操作时终止，不循环恢复  
 **And** 日志记录 tool、session 和判定原因
@@ -191,10 +194,19 @@ LobsterAI 与 Codex 的实现不同：
 ### 场景 4: 用户批准计划
 
 **Given** 历史中已有完整计划  
-**When** 用户发送“按照计划实现吧”  
+**When** 用户点击“确认执行”或发送“按照计划实现吧”
 **Then** 当前轮退出计划模式  
 **And** Agent 可以正常修改文件和执行验证  
 **And** 不重复输出计划
+
+### 场景 4.1: 用户调整计划
+
+**Given** 最新 assistant 消息包含完整计划并处于待确认状态
+**When** 用户点击“调整方案”或直接输入修改诉求
+**Then** 输入框保持计划模式
+**And** 旧计划确认按钮失效
+**And** Agent 重新输出一份新的计划
+**And** 新计划完成后再次进入待确认状态
 
 ### 场景 5: 模型先输出短前言
 
@@ -236,7 +248,7 @@ LobsterAI 与 Codex 的实现不同：
 - 使用开关控件表示启用/禁用。
 - 状态存储在当前 draft 的 collaboration mode 中。
 - 新建任务和已有 session 的输入框都使用同一状态模型。
-- 提交成功后恢复默认模式。
+- 状态在当前 draft/session 上保留，直到用户手动关闭、新建会话重置空白 draft、或明确确认执行。
 - 模型访问校验失败或提交失败时，不应提前丢失用户输入；模式是否保留遵循现有草稿失败语义。
 
 ### FR-2: Collaboration Mode 常量
@@ -327,7 +339,7 @@ Renderer 的 UI 状态、service 参数和日志均使用该常量。
 - 安全恢复保持 session 为 `running`，不展示超时提示；恢复请求失败时清理 active turn 并回到 `idle`。
 - 当前 OpenClaw 事件接口属于快速反应式防线，不是操作系统沙箱，也不能严格保证工具进程在事件到达前一个指令都未执行。实现和产品文案不得把它描述为强事务隔离。
 - 如果 OpenClaw 后续提供真正的 pre-tool policy hook，应把同一安全判定前移到执行前，并保留当前事件层作为纵深防御。
-- 系统消息使用 i18n 展示工具名，不显示原始敏感命令全文。
+- 不向对话流添加可见的内部阻止系统消息，避免“停止工具调用”提示误导用户以为任务失败。
 - Main 日志记录 session id、tool name 和内部判定原因。
 - read-only 命令误判属于 P0 回归，必须用真实 command 添加测试。
 
@@ -403,6 +415,20 @@ Renderer 负责主要模式切换，Main runtime 负责旧版本或异常 Render
 - 计划卡片复制按钮只复制计划正文。
 - plan-only 消息的原操作区仍显示在卡片下方。
 
+### FR-11.1: 计划待确认
+
+计划输出完成后，Renderer 对当前 session 的最新有效计划维护内存态：
+
+- 状态值为 `awaiting` 或 `handled`，不新增数据库表、字段或 message type。
+- 只有当前 session 最新有效计划处于 `awaiting` 时展示“确认执行”和“调整方案”按钮。
+- 新计划到达时，自动替换旧计划的待确认状态，旧按钮失效。
+- 用户点击“确认执行”时，发送明确实现指令并使用 `CoworkCollaborationMode.Default`。
+- 用户点击“调整方案”时，输入框聚焦并保持 `CoworkCollaborationMode.Plan`。
+- 用户不点击按钮而直接输入时，明确执行意图等价于“确认执行”，其他输入默认视为“调整方案”。
+- session 正在运行、计划生成失败、计划被中断或用户手动关闭计划模式时，不展示确认按钮。
+- 待确认状态不能阻塞停止按钮；它不是 running 状态。
+- Renderer 记录确认、调整和新计划待确认的 debug 日志，便于定位状态流转问题。
+
 ### FR-12: 下载和异常处理
 
 - 使用 `Blob`、object URL 和临时 anchor 下载 Markdown。
@@ -454,6 +480,7 @@ Main
 Renderer
   -> 隐藏标签
   -> 普通正文和计划卡片分离展示
+  -> 最新完整计划进入 awaiting_plan_confirmation
 ```
 
 ### 6.2 批准执行轮次
@@ -463,7 +490,7 @@ Renderer
   -> Renderer 检测 approval
   -> effective mode = default
   -> 恢复 kit/skill routing
-  -> 提交并重置 draft mode
+  -> 提交并关闭当前 session 的 plan mode
 Main runtime defensive check
   -> 若仍收到 Plan prompt 且历史存在完整计划
   -> 追加 Plan Mode Execution Override
@@ -472,7 +499,28 @@ OpenClaw
   -> 正常调用写工具和验证工具
 ```
 
-### 6.3 Recovery 流程
+### 6.3 待确认/调整流程
+
+```text
+assistant final plan
+  -> Renderer 识别最新完整计划
+  -> planConfirmation.state = awaiting
+用户点击确认执行或输入明确执行意图
+  -> mark handled
+  -> draft collaborationMode = default
+  -> onContinue(..., default)
+用户点击调整方案
+  -> mark handled
+  -> draft collaborationMode = plan
+  -> focus input
+用户直接输入补充诉求
+  -> mark handled
+  -> onContinue(..., plan)
+新 plan final
+  -> 替换为新的 awaiting
+```
+
+### 6.4 Recovery 流程
 
 ```text
 stable final
@@ -491,7 +539,7 @@ lifecycle end
   -> finalize
 ```
 
-### 6.4 消息展示流
+### 6.5 消息展示流
 
 ```text
 cowork_messages.content
@@ -533,6 +581,8 @@ cowork_messages.content
 
 - 用户提交 Plan turn。
 - 因批准实现退出计划模式。
+- 最新计划进入待确认状态。
+- 用户确认执行或调整计划。
 - 下载计划成功或失败。
 - 分叉计划消息请求。
 
@@ -583,12 +633,16 @@ Renderer 高频 hover、展开/收起和复制成功不需要 info 日志。
 | `chat.final` 缺失 | lifecycle fallback + history sync |
 | 只读复合 exec | 逐段验证并允许 |
 | 复合命令含一个写入子命令 | 阻止整条命令 |
-| 模型首次调用 write/edit | 收到 tool start 后立即 abort 危险 run，提示安全边界，并自动发起一次无工具计划恢复 |
+| 模型首次调用 write/edit | 收到 tool start 后立即 abort 危险 run，不展示内部阻止消息，并自动发起一次无工具计划恢复 |
 | 安全恢复再次调用写工具 | 终止 turn，不再次恢复 |
 | 安全 abort 收到 `chat state=aborted` | 视为预期事件，不显示超时提示，不清理待恢复 turn |
-| 安全恢复请求失败 | 清理 active turn、恢复 `idle`，保留阻止提示供排查 |
+| 安全恢复请求失败 | 清理 active turn、恢复 `idle`，依赖日志排查内部阻止原因 |
 | Plan prompt 被旧版本持久化 | 下一次 continue 自动清理 |
 | 用户批准但 UI 仍发送 Plan | Main execution override 兜底 |
+| 最新计划待确认时用户直接补充修改 | 默认按计划调整发送，不直接执行 |
+| 最新计划待确认时用户直接说“开始吧” | 等价确认执行，关闭 plan mode 并恢复 default |
+| 用户点击旧计划按钮 | 旧按钮不展示或已失效，不执行过期计划 |
+| 新建对话 | 空白 draft 不继承上一会话 plan mode 或待确认状态 |
 | 计划消息 metadata 残留 streaming | 明确选中分叉时复制并 final 化 |
 | 下载 Blob 失败 | toast + warn 日志，不影响消息 |
 | 组件卸载 | 清理 timer 和 object URL |

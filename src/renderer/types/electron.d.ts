@@ -12,6 +12,7 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   DataMigrationBackupResult,
   DataMigrationLastRestoreResponse,
@@ -353,11 +354,29 @@ import type { Platform } from '@shared/platform';
 import type { Agent, PresetAgent } from './agent';
 
 interface CreditItem {
-  type: 'subscription' | 'boost' | 'free';
+  type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation';
   label: string;
   labelEn: string;
   creditsRemaining: number;
   expiresAt: string | null;
+}
+
+interface CreditsResetCampaignStatusData {
+  enabled: boolean;
+  active: boolean;
+  registeredEligible: boolean;
+  participated: boolean;
+  participationType: string | null;
+  identity: 'subscription' | 'free';
+  availableResetCount: number;
+  availablePromoSubscriptionCount: number;
+  promoPlanId: number;
+  promoAmount: number;
+  campaignCode: string;
+  startAt: string;
+  endAt: string;
+  registeredBefore: string;
+  reason: string;
 }
 
 interface ProfileSummaryData {
@@ -366,6 +385,9 @@ interface ProfileSummaryData {
   avatarUrl: string | null;
   totalCreditsRemaining: number;
   creditItems: CreditItem[];
+  availableResetCount?: number;
+  availablePromoSubscriptionCount?: number;
+  creditsResetCampaign?: CreditsResetCampaignStatusData;
 }
 
 interface HtmlShareResult {
@@ -713,6 +735,13 @@ interface IElectronAPI {
       total?: number;
       error?: string;
     }>;
+    getSessionMessageRailIndex: (
+      sessionId: string,
+    ) => Promise<{
+      success: boolean;
+      items?: CoworkMessageRailIndexItem[];
+      error?: string;
+    }>;
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;
@@ -768,6 +797,7 @@ interface IElectronAPI {
         sessionKey: string | null;
         status: 'running' | 'done' | 'error';
         createdAt: number;
+        endedAt: number | null;
       }>;
       error?: string;
     }>;
@@ -1005,7 +1035,7 @@ interface IElectronAPI {
   };
   autoLaunch: {
     get: () => Promise<{ enabled: boolean }>;
-    set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+    set: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string; errorCode?: string }>;
   };
   preventSleep: {
     get: () => Promise<{ enabled: boolean }>;
@@ -1014,6 +1044,11 @@ interface IElectronAPI {
   appInfo: {
     getVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
+    getKeyfromAttribution: () => Promise<{
+      firstKeyfrom: string;
+      latestKeyfrom: string;
+      updatedAt: number;
+    }>;
     relaunch: () => Promise<void>;
   };
   appUpdate: {
@@ -1288,6 +1323,7 @@ interface IElectronAPI {
   scheduledTasks: {
     list: () => Promise<{
       success: boolean;
+      ready?: boolean;
       tasks?: import('../../scheduledTask/types').ScheduledTask[];
       error?: string;
     }>;
@@ -1338,10 +1374,13 @@ interface IElectronAPI {
       filter?: import('../../scheduledTask/types').RunFilter,
     ) => Promise<{
       success: boolean;
+      ready?: boolean;
       runs?: import('../../scheduledTask/types').ScheduledTaskRunWithName[];
       error?: string;
     }>;
-    resolveSession: (sessionKey: string) => Promise<{
+    resolveSession: (
+      input: string | { sessionId?: string | null; sessionKey?: string | null },
+    ) => Promise<{
       success: boolean;
       session?: import('./cowork').CoworkSession | null;
       error?: string;
@@ -1394,7 +1433,20 @@ interface IElectronAPI {
     getAccessToken: () => Promise<string | null>;
     getModels: () => Promise<{
       success: boolean;
-      models?: Array<{ modelId: string; modelName: string; provider: string; apiFormat: string }>;
+      models?: Array<{
+        modelId: string;
+        modelName: string;
+        provider: string;
+        apiFormat: string;
+        supportsImage?: boolean;
+        supportsThinking?: boolean;
+        contextWindow?: number;
+        explicitContextCache?: boolean;
+        costMultiplier?: number;
+        description?: string;
+        accessible?: boolean;
+        restrictionHint?: string;
+      }>;
     }>;
     getPricingCatalog: () => Promise<{
       success: boolean;
