@@ -807,6 +807,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: '对 AI 说"记住……"，重要信息会写入长期记忆，下次对话自动生效',
     engineStartingTip6: 'AI 执行敏感操作前会先请求你的确认，可以放心交给它',
     coworkOpenClawError: 'OpenClaw 网关未能在规定时间内启动成功。',
+    coworkOpenClawQuickRepair: '一键修复',
+    coworkOpenClawErrorRepairHint:
+      '推荐使用一键修复：自动备份并重建 OpenClaw 配置后重新启动网关，可解决大多数启动失败问题；不会删除聊天记录、模型配置、技能或工作区文件。',
+    coworkOpenClawErrorShort: '网关启动失败',
+    coworkOpenClawErrorDefer: '稍后处理',
     openClawMaintenanceTitle: '运行维护',
     openClawRepairGatewayStateTitle: '修复启动问题',
     openClawRepairGatewayStateDesc: '备份并重建 OpenClaw 配置，然后重新启动网关。',
@@ -3468,6 +3473,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: 'Tell AI to "remember..." and it saves key facts to long-term memory for future chats',
     engineStartingTip6: 'AI asks for your approval before sensitive operations, so you stay in control',
     coworkOpenClawError: 'OpenClaw gateway failed to become healthy in time.',
+    coworkOpenClawQuickRepair: 'Quick Repair',
+    coworkOpenClawErrorRepairHint:
+      'Quick Repair backs up and rebuilds the OpenClaw config, then restarts the gateway. It resolves most startup failures and keeps chats, model settings, skills, and workspace files.',
+    coworkOpenClawErrorShort: 'Gateway failed to start',
+    coworkOpenClawErrorDefer: 'Later',
     openClawMaintenanceTitle: 'Run Maintenance',
     openClawRepairGatewayStateTitle: 'Repair Startup',
     openClawRepairGatewayStateDesc: 'Back up and rebuild the OpenClaw config, then restart the gateway.',
