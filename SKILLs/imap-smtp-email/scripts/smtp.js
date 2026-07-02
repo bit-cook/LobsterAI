@@ -8,7 +8,12 @@
 
 const nodemailer = require('nodemailer');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+const {
+  createSmtpConfig,
+  getTargetAccounts,
+  listAccountsConfig,
+  redactAccount,
+} = require('./config');
 
 // Parse command-line arguments
 function parseArgs() {
@@ -33,32 +38,30 @@ function parseArgs() {
 }
 
 // Create SMTP transporter
-function createTransporter() {
-  const config = {
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    tls: {
-      rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
-    },
-  };
-
+function createTransporter(account) {
+  const config = createSmtpConfig(account);
+  console.error(`[smtp-debug] Account: ${JSON.stringify(redactAccount(account))}`);
   console.error(`[smtp-debug] Config: host=${config.host}, port=${config.port}, user=${config.auth.user}, secure=${config.secure}, rejectUnauthorized=${config.tls.rejectUnauthorized}, hasPassword=${!!config.auth.pass}`);
-
-  if (!config.host || !config.auth.user || !config.auth.pass) {
-    throw new Error('Missing SMTP configuration. Please set SMTP_HOST, SMTP_USER, and SMTP_PASS in .env');
-  }
 
   return nodemailer.createTransport(config);
 }
 
 // Send email
-async function sendEmail(options) {
-  const transporter = createTransporter();
+async function sendEmail(account, options) {
+  if (account.requireSendConfirmation !== false && options.confirmed !== true && options.confirmed !== 'true') {
+    return {
+      success: false,
+      code: 'confirmation_required',
+      message: 'Email sending requires explicit confirmation. Re-run with --confirmed after the user confirms recipients, subject, account, and body.',
+      accountId: account.id,
+      accountName: account.name,
+      from: options.from || account.smtpFrom || account.email,
+      to: options.to,
+      subject: options.subject || '(no subject)',
+    };
+  }
+
+  const transporter = createTransporter(account);
 
   // Verify connection
   try {
@@ -69,7 +72,7 @@ async function sendEmail(options) {
   }
 
   const mailOptions = {
-    from: options.from || process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: options.from || account.smtpFrom || account.email,
     to: options.to,
     cc: options.cc || undefined,
     bcc: options.bcc || undefined,
@@ -88,6 +91,8 @@ async function sendEmail(options) {
 
   return {
     success: true,
+    accountId: account.id,
+    accountName: account.name,
     messageId: info.messageId,
     response: info.response,
     to: mailOptions.to,
@@ -107,25 +112,25 @@ function readAttachment(filePath) {
 }
 
 // Send email with file content
-async function sendEmailWithContent(options) {
+async function sendEmailWithContent(account, options) {
   // Handle attachments
   if (options.attach) {
     const attachFiles = options.attach.split(',').map(f => f.trim());
     options.attachments = attachFiles.map(f => readAttachment(f));
   }
 
-  return await sendEmail(options);
+  return await sendEmail(account, options);
 }
 
 // Test SMTP connection
-async function testConnection() {
-  const transporter = createTransporter();
+async function testConnection(account) {
+  const transporter = createTransporter(account);
 
   try {
     await transporter.verify();
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: process.env.SMTP_USER, // Send to self
+      from: account.smtpFrom || account.email,
+      to: account.email, // Send to self
       subject: 'SMTP Connection Test',
       text: 'This is a test email from the IMAP/SMTP email skill.',
       html: '<p>This is a <strong>test email</strong> from the IMAP/SMTP email skill.</p>',
@@ -133,6 +138,8 @@ async function testConnection() {
 
     return {
       success: true,
+      accountId: account.id,
+      accountName: account.name,
       message: 'SMTP connection successful',
       messageId: info.messageId,
     };
@@ -142,8 +149,8 @@ async function testConnection() {
 }
 
 // Verify SMTP connection without sending email
-async function verifyConnection() {
-  const transporter = createTransporter();
+async function verifyConnection(account) {
+  const transporter = createTransporter(account);
 
   try {
     console.error('[smtp-debug] Verifying SMTP connection...');
@@ -151,6 +158,8 @@ async function verifyConnection() {
     console.error('[smtp-debug] SMTP verification succeeded');
     return {
       success: true,
+      accountId: account.id,
+      accountName: account.name,
       message: 'SMTP verification successful',
     };
   } catch (err) {
@@ -165,9 +174,18 @@ async function main() {
 
   try {
     let result;
+    let account;
 
     switch (command) {
+      case 'accounts':
+        result = listAccountsConfig();
+        break;
+
       case 'send':
+        if (options['all-accounts']) {
+          throw new Error('--all-accounts is not supported for send; pass --account <id>');
+        }
+        account = getTargetAccounts(options).accounts[0];
         if (!options.to) {
           throw new Error('Missing required option: --to <email>');
         }
@@ -197,21 +215,30 @@ async function main() {
           options.text = options.body;
         }
 
-        result = await sendEmailWithContent(options);
+        result = await sendEmailWithContent(account, options);
         break;
 
       case 'test':
-        result = await testConnection();
+        if (options['all-accounts']) {
+          throw new Error('--all-accounts is not supported for test; pass --account <id>');
+        }
+        account = getTargetAccounts(options).accounts[0];
+        result = await testConnection(account);
         break;
 
       case 'verify':
-        result = await verifyConnection();
+        if (options['all-accounts']) {
+          throw new Error('--all-accounts is not supported for verify; pass --account <id>');
+        }
+        account = getTargetAccounts(options).accounts[0];
+        result = await verifyConnection(account);
         break;
 
       default:
         console.error('Unknown command:', command);
-        console.error('Available commands: send, test, verify');
+        console.error('Available commands: accounts, send, test, verify');
         console.error('\nUsage:');
+        console.error('  accounts List configured accounts without secrets');
         console.error('  send   --to <email> --subject <text> [--body <text>] [--html] [--cc <email>] [--bcc <email>] [--attach <file>]');
         console.error('  send   --to <email> --subject <text> --body-file <file> [--html-file <file>] [--attach <file>]');
         console.error('  test   Test SMTP connection');

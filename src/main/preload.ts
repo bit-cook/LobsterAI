@@ -73,6 +73,12 @@ contextBridge.exposeInMainWorld('electron', {
     getConfig: (skillId: string) => ipcRenderer.invoke('skills:getConfig', skillId),
     setConfig: (skillId: string, config: Record<string, string>) =>
       ipcRenderer.invoke('skills:setConfig', skillId, config),
+    getEmailAccountsConfig: (skillId: string) =>
+      ipcRenderer.invoke('skills:getEmailAccountsConfig', skillId),
+    setEmailAccountsConfig: (skillId: string, config: unknown) =>
+      ipcRenderer.invoke('skills:setEmailAccountsConfig', skillId, config),
+    testEmailAccountConnectivity: (skillId: string, account: unknown) =>
+      ipcRenderer.invoke('skills:testEmailAccountConnectivity', skillId, account),
     testEmailConnectivity: (skillId: string, config: Record<string, string>) =>
       ipcRenderer.invoke('skills:testEmailConnectivity', skillId, config),
     fetchMarketplace: () => ipcRenderer.invoke('skills:fetchMarketplace'),

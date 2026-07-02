@@ -11,9 +11,18 @@ Read, search, and manage email via IMAP protocol. Send email via SMTP. Supports 
 
 ## Important: Configuration is Pre-configured
 
-The `.env` configuration file is automatically managed by LobsterAI Settings (邮箱设置). **Do NOT ask the user to create or edit `.env` — just run the commands directly.** If credentials are wrong, the scripts will return a clear error message; only then should you inform the user to check their email settings.
+The `accounts.json` configuration file is automatically managed by LobsterAI Settings (邮箱设置). Legacy `.env` configuration is still supported as a fallback for older users. **Do NOT ask the user to create or edit these files — just run the commands directly.** If credentials are wrong, the scripts will return a clear error message; only then should you inform the user to check their email settings.
 
-The `.env` file is located in this skill's directory (same folder as this SKILL.md file). The scripts load it automatically via an absolute path, regardless of the current working directory.
+The configuration files are located in this skill's directory (same folder as this SKILL.md file). The scripts load them automatically via absolute paths, regardless of the current working directory.
+
+For multi-account setups:
+- Run `node scripts/imap.js accounts` or `node scripts/smtp.js accounts` to list configured account IDs without exposing secrets.
+- Omit `--account` to use the default enabled account.
+- Pass `--account <id>` to use a specific account.
+- Pass `--all-accounts` only for read/list commands that support fan-out (`check`, `search`, `list-mailboxes`).
+- Every JSON result includes account metadata when a multi-account command is used.
+
+For sending email, always review recipient, subject, sender account, and body with the user first. Sending is blocked unless `--confirmed` is passed.
 
 ## Configuration Reference
 
@@ -60,14 +69,24 @@ SMTP_REJECT_UNAUTHORIZED=true     # Set to false for self-signed certs
 
 ## IMAP Commands (Receiving Email)
 
+### accounts
+List configured email accounts without exposing passwords.
+
+```bash
+node scripts/imap.js accounts
+```
+
 ### check
 Check for new/unread emails.
 
 ```bash
 node scripts/imap.js check [--limit 10] [--mailbox INBOX] [--recent 2h]
+node scripts/imap.js check --all-accounts [--limit 10]
 ```
 
 Options:
+- `--account <id>`: Use a specific configured account
+- `--all-accounts`: Check every enabled account
 - `--limit <n>`: Max results (default: 10)
 - `--mailbox <name>`: Mailbox to check (default: INBOX)
 - `--recent <time>`: Only show emails from last X time (e.g., 30m, 2h, 7d)
@@ -77,6 +96,7 @@ Fetch full email content by UID.
 
 ```bash
 node scripts/imap.js fetch <uid> [--mailbox INBOX]
+node scripts/imap.js fetch <uid> --account <id> [--mailbox INBOX]
 ```
 
 ### download
@@ -84,6 +104,7 @@ Download all attachments from an email, or a specific attachment.
 
 ```bash
 node scripts/imap.js download <uid> [--mailbox INBOX] [--dir <path>] [--file <filename>]
+node scripts/imap.js download <uid> --account <id> [--mailbox INBOX] [--dir <path>] [--file <filename>]
 ```
 
 Options:
@@ -107,6 +128,8 @@ Options:
   --before <date>    Before date (YYYY-MM-DD)
   --limit <n>        Max results (default: 20)
   --mailbox <name>   Mailbox to search (default: INBOX)
+  --account <id>     Use a specific configured account
+  --all-accounts     Search every enabled account
 ```
 
 ### mark-read / mark-unread
@@ -115,6 +138,7 @@ Mark message(s) as read or unread.
 ```bash
 node scripts/imap.js mark-read <uid> [uid2 uid3...]
 node scripts/imap.js mark-unread <uid> [uid2 uid3...]
+node scripts/imap.js mark-read --account <id> <uid> [uid2 uid3...]
 ```
 
 ### list-mailboxes
@@ -122,15 +146,23 @@ List all available mailboxes/folders.
 
 ```bash
 node scripts/imap.js list-mailboxes
+node scripts/imap.js list-mailboxes --all-accounts
 ```
 
 ## SMTP Commands (Sending Email)
+
+### accounts
+List configured email accounts without exposing passwords.
+
+```bash
+node scripts/smtp.js accounts
+```
 
 ### send
 Send email via SMTP.
 
 ```bash
-node scripts/smtp.js send --to <email> --subject <text> [options]
+node scripts/smtp.js send --to <email> --subject <text> --confirmed [options]
 ```
 
 **Required:**
@@ -146,6 +178,8 @@ node scripts/smtp.js send --to <email> --subject <text> [options]
 - `--bcc <email>`: BCC recipients
 - `--attach <file>`: Attachments (comma-separated)
 - `--from <email>`: Override default sender
+- `--account <id>`: Send from a specific configured account
+- `--confirmed`: Required after the user confirms the email details
 
 **Examples:**
 ```bash

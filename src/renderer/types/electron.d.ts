@@ -275,6 +275,32 @@ interface EmailConnectivityTestResult {
   checks: EmailConnectivityCheck[];
 }
 
+interface EmailSkillAccountConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider?: string;
+  email: string;
+  password?: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapRejectUnauthorized?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpRejectUnauthorized?: boolean;
+  smtpFrom?: string;
+  mailbox?: string;
+  requireSendConfirmation?: boolean;
+}
+
+interface EmailSkillAccountsConfig {
+  version: 1;
+  defaultAccountId: string;
+  accounts: EmailSkillAccountConfig[];
+}
+
 type CoworkPermissionResult =
   | {
       behavior: 'allow';
@@ -469,6 +495,17 @@ interface IElectronAPI {
       skillId: string,
       config: Record<string, string>,
     ) => Promise<{ success: boolean; error?: string }>;
+    getEmailAccountsConfig: (
+      skillId: string,
+    ) => Promise<{ success: boolean; config?: EmailSkillAccountsConfig; error?: string }>;
+    setEmailAccountsConfig: (
+      skillId: string,
+      config: EmailSkillAccountsConfig,
+    ) => Promise<{ success: boolean; error?: string }>;
+    testEmailAccountConnectivity: (
+      skillId: string,
+      account: EmailSkillAccountConfig,
+    ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     testEmailConnectivity: (
       skillId: string,
       config: Record<string, string>,
