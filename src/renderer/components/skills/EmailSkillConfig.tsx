@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { i18nService } from '../../services/i18n';
 import { LogReporterAction, reportYdAnalyzer } from '../../services/logReporter';
 import { type EmailSkillAccountConfig, type EmailSkillAccountsConfig, skillService } from '../../services/skill';
+import Modal from '../common/Modal';
 
 const SKILL_ID = 'imap-smtp-email';
 const EMAIL_ANALYTICS_SOURCE = 'settings_email';
@@ -205,13 +206,13 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [persisting, setPersisting] = useState(false);
   const [persistError, setPersistError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [testingAccountId, setTestingAccountId] = useState<string | null>(null);
   const [connectivityResults, setConnectivityResults] = useState<Record<string, EmailConnectivityTestResult>>({});
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
+  const [pendingDeleteAccountId, setPendingDeleteAccountId] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const persistQueueRef = useRef(Promise.resolve());
   const persistPendingCountRef = useRef(0);
@@ -261,9 +262,6 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
       setConfig(normalized);
     }
     persistPendingCountRef.current += 1;
-    if (isMountedRef.current) {
-      setPersisting(true);
-    }
     console.debug('[EmailSkillConfig] persisting email accounts config', {
       accountCount: normalized.accounts.length,
       enabledAccountCount: normalized.accounts.filter(account => account.enabled).length,
@@ -276,9 +274,6 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
     persistQueueRef.current = persistTask.then(() => undefined, () => undefined);
     const success = await persistTask;
     persistPendingCountRef.current = Math.max(0, persistPendingCountRef.current - 1);
-    if (isMountedRef.current && persistPendingCountRef.current === 0) {
-      setPersisting(false);
-    }
     if (isMountedRef.current) {
       setPersistError(success ? null : i18nService.t('emailConfigError'));
     }
@@ -337,7 +332,14 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
     await persistConfig(nextConfig, 'account_added');
   };
 
-  const handleDeleteAccount = async (accountId: string) => {
+  const handleRequestDeleteAccount = (accountId: string) => {
+    setPendingDeleteAccountId(accountId);
+  };
+
+  const handleConfirmDeleteAccount = async () => {
+    if (!pendingDeleteAccountId) return;
+    const accountId = pendingDeleteAccountId;
+    setPendingDeleteAccountId(null);
     const accounts = config.accounts.filter(account => account.id !== accountId);
     const defaultAccountId = config.defaultAccountId === accountId
       ? (accounts.find(account => account.enabled)?.id ?? accounts[0]?.id ?? '')
@@ -483,6 +485,7 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
   const activeResult = activeAccount ? connectivityResults[activeAccount.id] : null;
   const connectivityPassed = activeResult?.verdict === 'pass';
   const currentPreset = activeAccount?.provider ? PROVIDER_PRESETS[activeAccount.provider] : null;
+  const pendingDeleteAccount = config.accounts.find(account => account.id === pendingDeleteAccountId) ?? null;
 
   return (
     <div className="rounded-lg border border-border-subtle bg-surface overflow-hidden">
@@ -502,14 +505,12 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
         )}
       </div>
 
-      {(loadError || persistError || persisting) && (
+      {(loadError || persistError) && (
         <div className="border-b border-border-subtle px-5 py-2 text-xs">
           {loadError ? (
             <span className="text-red-600 dark:text-red-400">{loadError}</span>
           ) : persistError ? (
             <span className="text-red-600 dark:text-red-400">{persistError}</span>
-          ) : persisting ? (
-            <span className="text-secondary">{i18nService.t('saving')}...</span>
           ) : null}
         </div>
       )}
@@ -559,31 +560,64 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
 
         {activeAccount ? (
           <div className="space-y-4 p-5">
-            <div className="flex items-start justify-between gap-4 border-b border-border-subtle pb-4">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">{getAccountDisplayName(activeAccount)}</div>
-                <div className="mt-0.5 text-xs text-secondary truncate">{activeAccount.id}</div>
+            <div className="flex items-start justify-between gap-3 border-b border-border-subtle pb-4">
+              <div className="min-w-0 flex-1">
+                <div
+                  className="max-w-full truncate text-[15px] font-semibold leading-5 text-foreground"
+                  title={getAccountDisplayName(activeAccount)}
+                >
+                  {getAccountDisplayName(activeAccount)}
+                </div>
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="max-w-full truncate text-[11px] leading-4 text-secondary" title={activeAccount.id}>
+                    {activeAccount.id}
+                  </span>
+                  <span className={`inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-none ${
+                    activeAccount.enabled
+                      ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                      : 'bg-surface-inset text-secondary'
+                  }`}>
+                    {activeAccount.enabled ? i18nService.t('enabled') : i18nService.t('disabled')}
+                  </span>
+                  {activeAccount.id === config.defaultAccountId && (
+                    <span className="inline-flex h-5 items-center gap-1 rounded-full bg-yellow-50 px-2 text-[11px] leading-none text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300">
+                      <StarIcon className="h-3 w-3" />
+                      {i18nService.t('emailDefaultAccount')}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex flex-shrink-0 items-center justify-end gap-1.5">
                 <button
                   type="button"
                   onClick={() => void handleSetDefault(activeAccount.id)}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-surface-raised"
+                  title={activeAccount.id === config.defaultAccountId ? i18nService.t('emailDefaultAccount') : i18nService.t('emailSetDefault')}
+                  aria-label={activeAccount.id === config.defaultAccountId ? i18nService.t('emailDefaultAccount') : i18nService.t('emailSetDefault')}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+                    activeAccount.id === config.defaultAccountId
+                      ? 'border-yellow-300 bg-yellow-50 text-yellow-700 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300'
+                      : 'border-border text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
                 >
                   <StarIcon className="h-3.5 w-3.5" />
-                  {activeAccount.id === config.defaultAccountId ? i18nService.t('emailDefaultAccount') : i18nService.t('emailSetDefault')}
                 </button>
                 <button
                   type="button"
                   onClick={() => void persistActiveAccount({ enabled: !activeAccount.enabled })}
-                  className="h-8 rounded-lg border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-surface-raised"
+                  className={`h-8 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                    activeAccount.enabled
+                      ? 'border-border text-foreground hover:bg-surface-raised'
+                      : 'border-primary/40 bg-primary/5 text-primary hover:bg-primary/10'
+                  }`}
                 >
                   {activeAccount.enabled ? i18nService.t('disable') : i18nService.t('enable')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleDeleteAccount(activeAccount.id)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/40 text-red-600 transition-colors hover:bg-red-500/10"
+                  title={i18nService.t('delete')}
+                  aria-label={i18nService.t('delete')}
+                  onClick={() => handleRequestDeleteAccount(activeAccount.id)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-500/30 text-red-600 transition-colors hover:border-red-500/50 hover:bg-red-500/10"
                 >
                   <TrashIcon className="h-3.5 w-3.5" />
                 </button>
@@ -876,6 +910,37 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
           </div>
         )}
       </div>
+
+      {pendingDeleteAccount && (
+        <Modal
+          onClose={() => setPendingDeleteAccountId(null)}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-2xl"
+        >
+          <div className="text-sm font-semibold text-foreground">
+            {i18nService.t('confirmDelete')}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-secondary">
+            {i18nService.t('emailDeleteConfirm').replace('{name}', getAccountDisplayName(pendingDeleteAccount))}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingDeleteAccountId(null)}
+              className="h-8 rounded-lg border border-border px-3 text-xs text-foreground transition-colors hover:bg-surface-raised"
+            >
+              {i18nService.t('cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConfirmDeleteAccount()}
+              className="h-8 rounded-lg bg-red-600 px-3 text-xs font-medium text-white transition-colors hover:bg-red-700"
+            >
+              {i18nService.t('delete')}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

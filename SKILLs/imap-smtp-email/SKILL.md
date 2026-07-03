@@ -2,7 +2,7 @@
 name: imap-smtp-email
 description: Read and send email via IMAP/SMTP. Check for new/unread messages, fetch content, search mailboxes, mark as read/unread, and send emails with attachments. Works with any IMAP/SMTP server including Gmail, Outlook, 163.com, vip.163.com, 126.com, vip.126.com, 188.com, and vip.188.com.
 official: true
-version: 1.0.3
+version: 1.0.4
 ---
 
 # IMAP/SMTP Email Tool
@@ -20,6 +20,8 @@ Use the provided scripts as the only email transport interface. Do not write tem
 Do not claim that `node-imap`, `nodemailer`, or another dependency is broken unless an official script or verified stack trace proves it. A successful command means the configured email account works; a timeout means the current command timed out, not that the dependency is defective.
 
 Command results intentionally redact account metadata. In user-facing replies, use the redacted account label/email from the JSON result and do not repeat full configured email addresses unless the user explicitly asks for the exact address. Email content fields such as sender, subject, and message body may still be shown when they are the requested result.
+
+Never ask the user to send an email authorization code, app password, account password, or other credential in chat. If an account is disabled, incomplete, or has invalid credentials, ask the user to enable or update it in LobsterAI Settings > Email Settings, then rerun the official command.
 
 For multi-account setups:
 - Run `node scripts/imap.js accounts` or `node scripts/smtp.js accounts` to list configured account IDs without exposing secrets.
