@@ -13,7 +13,7 @@ import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants
 import { normalizeNotificationSettings } from '../../shared/notifications/constants';
 import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import { type AppConfig, defaultConfig, getProviderDisplayName, getVisibleProviders, ShortcutAction, type ShortcutConfig } from '../config';
+import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, normalizeFontPreference, ShortcutAction, type ShortcutConfig } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { apiService } from '../services/api';
 import { configService } from '../services/config';
@@ -24,6 +24,7 @@ import { imService } from '../services/im';
 import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import { formatShortcutForDisplay, getShortcutConflictSignature, matchesShortcut } from '../services/shortcuts';
 import { themeService } from '../services/theme';
+import { applyTypographyPreferences } from '../services/typography';
 import type { RootState } from '../store';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import { setAvailableModels } from '../store/slices/modelSlice';
@@ -251,6 +252,32 @@ const countProviderModels = (providerConfig?: ProviderConfig): number => (
   Array.isArray(providerConfig?.models) ? providerConfig.models.length : 0
 );
 
+const sortAnalyticsObject = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sortAnalyticsObject);
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((sorted, key) => {
+        sorted[key] = sortAnalyticsObject((value as Record<string, unknown>)[key]);
+        return sorted;
+      }, {});
+  }
+  return value;
+};
+
+const serializeProviderModelsForAnalyticsDiff = (providerConfig?: ProviderConfig): string => (
+  JSON.stringify((providerConfig?.models ?? []).map(model => ({
+    contextWindow: model.contextWindow,
+    customParams: sortAnalyticsObject(model.customParams),
+    id: model.id,
+    name: model.name,
+    supportsImage: model.supportsImage === true,
+    supportsThinking: model.supportsThinking === true,
+  })))
+);
+
 const getProviderAuthTypeForAnalytics = (providerConfig?: ProviderConfig): string => (
   providerConfig?.authType || ProviderAuthType.ApiKey
 );
@@ -299,6 +326,10 @@ const buildCustomModelSettingsAnalyticsSummary = (
     }
     if (countProviderModels(previousProvider) !== countProviderModels(nextProvider)) {
       changedKeys.add('model_count');
+      providerChanged = true;
+    }
+    if (serializeProviderModelsForAnalyticsDiff(previousProvider) !== serializeProviderModelsForAnalyticsDiff(nextProvider)) {
+      changedKeys.add('model_config');
       providerChanged = true;
     }
 
@@ -1248,6 +1279,45 @@ const SettingsToggleRow: React.FC<{
   </div>
 );
 
+const SettingsNumberInputRow: React.FC<{
+  id: string;
+  title: string;
+  description: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}> = ({ id, title, description, value, min, max, onChange }) => (
+  <div className="flex items-center justify-between gap-4">
+    <div className="min-w-0 flex-1">
+      <label htmlFor={id} className="block text-sm font-medium text-foreground">
+        {title}
+      </label>
+      <p className="mt-1 text-sm text-secondary">
+        {description}
+      </p>
+    </div>
+    <div className="flex shrink-0 items-center gap-2">
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(event) => {
+          onChange(normalizeFontPreference(event.currentTarget.value, value, min, max));
+        }}
+        onBlur={(event) => {
+          onChange(normalizeFontPreference(event.currentTarget.value, value, min, max));
+        }}
+        className="h-8 w-16 rounded-lg border border-border bg-surface px-2 text-center text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+      />
+      <span className="text-sm text-secondary">px</span>
+    </div>
+  </div>
+);
+
 const Settings: React.FC<SettingsProps> = ({
   onClose,
   initialTab,
@@ -1263,6 +1333,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
+  const [uiFontSize, setUiFontSize] = useState<number>(FontPreferences.UiFontSizeDefault);
+  const [codeFontSize, setCodeFontSize] = useState<number>(FontPreferences.CodeFontSizeDefault);
   const [language, setLanguage] = useState<LanguageType>('zh');
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [useSystemProxy, setUseSystemProxy] = useState(false);
@@ -1295,6 +1367,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [isExportingProviders, setIsExportingProviders] = useState(false);
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
+  const initialUiFontSizeRef = useRef<number>(FontPreferences.UiFontSizeDefault);
+  const initialCodeFontSizeRef = useRef<number>(FontPreferences.CodeFontSizeDefault);
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
 
@@ -1323,6 +1397,20 @@ const Settings: React.FC<SettingsProps> = ({
     { loggedIn: false } | { loggedIn: true; email?: string } | null
   >(null);
 
+  // xAI (Grok) OAuth state
+  type XaiOAuthPhase =
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'device_code'; userCode: string; verificationUri: string }
+    | { kind: 'success'; email?: string }
+    | { kind: 'error'; message: string };
+  const [xaiOAuthPhase, setXaiOAuthPhase] = useState<XaiOAuthPhase>({ kind: 'idle' });
+  // Mirrors the OpenClaw auth-profiles store on disk; refreshed whenever the
+  // xAI provider tab becomes active and after login/logout. `null` = not yet checked.
+  const [xaiOAuthStatus, setXaiOAuthStatus] = useState<
+    { loggedIn: false } | { loggedIn: true; email?: string } | null
+  >(null);
+
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
 
@@ -1331,10 +1419,14 @@ const Settings: React.FC<SettingsProps> = ({
   const minimaxIsOAuthMode = providers.minimax.authType !== 'apikey';
   // OpenAI defaults to API key mode unless the user explicitly opts in to OAuth
   const openaiIsOAuthMode = providers.openai.authType === 'oauth';
-  const isBaseUrlLocked = (activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) || (activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled) || (activeProvider === 'qianfan' && providers.qianfan.codingPlanEnabled) || (activeProvider === 'xiaomi' && providers.xiaomi.codingPlanEnabled) || (activeProvider === 'minimax' && minimaxIsOAuthMode) || (activeProvider === 'openai' && openaiIsOAuthMode);
+  // xAI likewise defaults to API key mode; OAuth is an explicit opt-in
+  const xaiIsOAuthMode = providers.xai.authType === 'oauth';
+  const isBaseUrlLocked = (activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) || (activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled) || (activeProvider === 'qianfan' && providers.qianfan.codingPlanEnabled) || (activeProvider === 'xiaomi' && providers.xiaomi.codingPlanEnabled) || (activeProvider === 'minimax' && minimaxIsOAuthMode) || (activeProvider === 'openai' && openaiIsOAuthMode) || (activeProvider === 'xai' && xaiIsOAuthMode);
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
+  // 内容区下方仍有未滚出的内容时，在底部按钮区上方显示渐隐遮罩
+  const [footerFadeVisible, setFooterFadeVisible] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const emailCopiedTimerRef = useRef<number | null>(null);
   const openClawGatewayCopiedTimerRef = useRef<number | null>(null);
@@ -1562,6 +1654,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
   const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
   const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(coworkConfig.skipMissedJobs ?? true);
+  const [openClawHeartbeatEnabled, setOpenClawHeartbeatEnabled] = useState<boolean>(coworkConfig.openClawHeartbeatEnabled ?? true);
   const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(coworkConfig.embeddingEnabled ?? false);
   const [embeddingProvider, setEmbeddingProvider] = useState<string>(coworkConfig.embeddingProvider ?? 'openai');
   const [embeddingModel, setEmbeddingModel] = useState<string>(coworkConfig.embeddingModel ?? '');
@@ -1599,6 +1692,7 @@ const Settings: React.FC<SettingsProps> = ({
     setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
     setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
     setSkipMissedJobs(coworkConfig.skipMissedJobs ?? true);
+    setOpenClawHeartbeatEnabled(coworkConfig.openClawHeartbeatEnabled ?? true);
     setEmbeddingEnabled(coworkConfig.embeddingEnabled ?? false);
     setEmbeddingProvider(coworkConfig.embeddingProvider ?? 'openai');
     setEmbeddingModel(coworkConfig.embeddingModel ?? '');
@@ -1617,6 +1711,7 @@ const Settings: React.FC<SettingsProps> = ({
     coworkConfig.memoryLlmJudgeEnabled,
     coworkConfig.openClawSessionPolicy?.keepAlive,
     coworkConfig.skipMissedJobs,
+    coworkConfig.openClawHeartbeatEnabled,
     coworkConfig.embeddingEnabled,
     coworkConfig.embeddingProvider,
     coworkConfig.embeddingModel,
@@ -1684,9 +1779,25 @@ const Settings: React.FC<SettingsProps> = ({
       const config = configService.getConfig();
 
       // Set general settings
+      const resolvedUiFontSize = normalizeFontPreference(
+        config.uiFontSize,
+        FontPreferences.UiFontSizeDefault,
+        FontPreferences.UiFontSizeMin,
+        FontPreferences.UiFontSizeMax,
+      );
+      const resolvedCodeFontSize = normalizeFontPreference(
+        config.codeFontSize,
+        FontPreferences.CodeFontSizeDefault,
+        FontPreferences.CodeFontSizeMin,
+        FontPreferences.CodeFontSizeMax,
+      );
       initialThemeRef.current = config.theme;
+      initialUiFontSizeRef.current = resolvedUiFontSize;
+      initialCodeFontSizeRef.current = resolvedCodeFontSize;
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
+      setUiFontSize(resolvedUiFontSize);
+      setCodeFontSize(resolvedCodeFontSize);
       setLanguage(config.language);
       setUseSystemProxy(config.useSystemProxy ?? false);
       setSqliteAutoBackupEnabled(config.sqliteAutoBackupEnabled === true);
@@ -1931,12 +2042,18 @@ const Settings: React.FC<SettingsProps> = ({
   useEffect(() => {
     const initialThemeId = initialThemeIdRef.current;
     const initialTheme = initialThemeRef.current;
+    const initialUiFontSize = initialUiFontSizeRef.current;
+    const initialCodeFontSize = initialCodeFontSizeRef.current;
     const initialLanguage = initialLanguageRef.current;
     return () => {
       if (didSaveRef.current) {
         return;
       }
       themeService.restoreTheme(initialThemeId, initialTheme);
+      applyTypographyPreferences({
+        uiFontSize: initialUiFontSize,
+        codeFontSize: initialCodeFontSize,
+      });
       i18nService.setLanguage(initialLanguage, { persist: false });
     };
   }, []);
@@ -1947,6 +2064,33 @@ const Settings: React.FC<SettingsProps> = ({
       contentRef.current.scrollTop = 0;
     }
   }, [activeTab]);
+
+  // 跟踪内容区滚动/尺寸/内容变化，决定底部渐隐遮罩是否显示
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setFooterFadeVisible(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+    };
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(update);
+    };
+    scheduleUpdate();
+    el.addEventListener('scroll', scheduleUpdate, { passive: true });
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(el);
+    const mutationObserver = new MutationObserver(scheduleUpdate);
+    mutationObserver.observe(el, { childList: true, subtree: true });
+    return () => {
+      el.removeEventListener('scroll', scheduleUpdate);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     setNoticeMessage(buildNoticeMessage());
@@ -2334,9 +2478,9 @@ const Settings: React.FC<SettingsProps> = ({
     return () => { cancelled = true; };
   }, [activeProvider]);
 
-  const persistOpenAIProvidersConfigInBackground = useCallback((nextProviders: ProvidersConfig) => {
+  const persistProviderAuthConfigInBackground = useCallback((nextProviders: ProvidersConfig) => {
     void configService.updateConfig({ providers: nextProviders }).catch((saveError) => {
-      console.error('[Settings] failed to save OpenAI OAuth provider state:', saveError);
+      console.error('[Settings] failed to save provider auth state:', saveError);
       setError(i18nService.t('failedToSaveSettings'));
     });
   }, []);
@@ -2360,7 +2504,7 @@ const Settings: React.FC<SettingsProps> = ({
       setProviders(nextProviders);
       setOpenaiOAuthStatus({ loggedIn: true, email: result.email ?? undefined });
       setOpenaiOAuthPhase({ kind: 'success', email: result.email ?? undefined });
-      persistOpenAIProvidersConfigInBackground(nextProviders);
+      persistProviderAuthConfigInBackground(nextProviders);
       setTimeout(() => setOpenaiOAuthPhase({ kind: 'idle' }), 1500);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2392,7 +2536,7 @@ const Settings: React.FC<SettingsProps> = ({
     setProviders(nextProviders);
     setOpenaiOAuthStatus({ loggedIn: false });
     setOpenaiOAuthPhase({ kind: 'idle' });
-    persistOpenAIProvidersConfigInBackground(nextProviders);
+    persistProviderAuthConfigInBackground(nextProviders);
     try {
       await window.electron.openaiCodexOAuth.logout();
     } catch {
@@ -2400,10 +2544,105 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
+  // Sync the persisted xAI login state (OpenClaw auth-profiles store) into
+  // local UI state whenever the xAI provider tab becomes active. Also
+  // reconciles stale providers config (e.g. credential removed externally).
+  useEffect(() => {
+    let cancelled = false;
+    if (activeProvider !== 'xai') return;
+    void window.electron.xaiOAuth.status().then((status) => {
+      if (cancelled) return;
+      if (status.loggedIn) {
+        setXaiOAuthStatus({ loggedIn: true, email: status.email });
+      } else {
+        setXaiOAuthStatus({ loggedIn: false });
+        setProviders(prev => {
+          if (prev.xai.authType !== 'oauth') return prev;
+          return { ...prev, xai: { ...prev.xai, authType: 'apikey' } };
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) setXaiOAuthStatus({ loggedIn: false });
+    });
+    return () => { cancelled = true; };
+  }, [activeProvider]);
+
+  const handleXaiOAuthLogin = async () => {
+    setXaiOAuthPhase({ kind: 'pending' });
+    // The main process falls back to the device-code flow when the loopback
+    // callback port is taken — surface the user code as soon as it arrives.
+    const unsubscribeDeviceCode = window.electron.xaiOAuth.onDeviceCode((info) => {
+      setXaiOAuthPhase({
+        kind: 'device_code',
+        userCode: info.userCode,
+        verificationUri: info.verificationUriComplete ?? info.verificationUri,
+      });
+    });
+    try {
+      const result = await window.electron.xaiOAuth.start();
+      if (!result.success) {
+        if (/cancelled/i.test(result.error)) {
+          setXaiOAuthPhase({ kind: 'idle' });
+        } else {
+          setXaiOAuthPhase({ kind: 'error', message: result.error });
+        }
+        return;
+      }
+      const nextProviders: ProvidersConfig = {
+        ...providers,
+        xai: {
+          ...providers.xai,
+          enabled: true,
+          authType: 'oauth',
+        },
+      };
+      setProviders(nextProviders);
+      setXaiOAuthStatus({ loggedIn: true, email: result.email ?? undefined });
+      setXaiOAuthPhase({ kind: 'success', email: result.email ?? undefined });
+      persistProviderAuthConfigInBackground(nextProviders);
+      setTimeout(() => setXaiOAuthPhase({ kind: 'idle' }), 1500);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setXaiOAuthPhase({ kind: 'error', message });
+    } finally {
+      unsubscribeDeviceCode();
+    }
+  };
+
+  const handleCancelXaiOAuthLogin = async () => {
+    try {
+      await window.electron.xaiOAuth.cancel();
+    } catch {
+      /* ignore — we still want to reset the UI */
+    }
+    setXaiOAuthPhase({ kind: 'idle' });
+  };
+
+  const handleXaiOAuthLogout = async () => {
+    const nextProviders: ProvidersConfig = {
+      ...providers,
+      xai: {
+        ...providers.xai,
+        enabled: providers.xai.apiKey.trim().length > 0,
+        authType: 'apikey' as const,
+      },
+    };
+    setProviders(nextProviders);
+    setXaiOAuthStatus({ loggedIn: false });
+    setXaiOAuthPhase({ kind: 'idle' });
+    persistProviderAuthConfigInBackground(nextProviders);
+    try {
+      await window.electron.xaiOAuth.logout();
+    } catch {
+      /* ignore — credential may already be gone */
+    }
+  };
+
   const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine
     || coworkMemoryEnabled !== coworkConfig.memoryEnabled
     || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled
     || skipMissedJobs !== (coworkConfig.skipMissedJobs ?? true)
+    || openClawHeartbeatEnabled !== (coworkConfig.openClawHeartbeatEnabled ?? true)
     || openClawSessionKeepAlive !== (coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays)
     || embeddingEnabled !== (coworkConfig.embeddingEnabled ?? false)
     || embeddingProvider !== (coworkConfig.embeddingProvider ?? 'openai')
@@ -2661,10 +2900,8 @@ const Settings: React.FC<SettingsProps> = ({
       if (result.scheduledRestart) {
         keepLoadingUntilRestart = true;
         setNoticeMessage(i18nService.t('openClawDataMigrationRestarting'));
-        reportAgentEngineMaintenanceAction('restore_data', 'started');
-      } else {
-        reportAgentEngineMaintenanceAction('restore_data', 'success');
       }
+      reportAgentEngineMaintenanceAction('restore_data', 'success');
     } catch (restoreError) {
       setError(restoreError instanceof Error ? restoreError.message : i18nService.t('openClawDataMigrationFailed'));
       reportAgentEngineMaintenanceAction('restore_data', 'failed', { errorCode: 'unknown' });
@@ -2925,6 +3162,7 @@ const Settings: React.FC<SettingsProps> = ({
         ? normalizeProvidersForSettingsSave(previousConfig.providers as ProvidersConfig)
         : normalizedProviders;
       const previousSkipMissedJobs = coworkConfig.skipMissedJobs ?? true;
+      const previousOpenClawHeartbeatEnabled = coworkConfig.openClawHeartbeatEnabled ?? true;
       const previousAgentEngine = coworkConfig.agentEngine || 'openclaw';
       const previousOpenClawSessionKeepAlive = coworkConfig.openClawSessionPolicy?.keepAlive
         || OpenClawSessionKeepAliveValues.ThirtyDays;
@@ -2960,6 +3198,18 @@ const Settings: React.FC<SettingsProps> = ({
         previousConfig.notificationSettings,
       ).taskCompletionNotificationsEnabled;
       const previousThemeId = initialThemeIdRef.current;
+      const previousUiFontSize = normalizeFontPreference(
+        previousConfig.uiFontSize,
+        FontPreferences.UiFontSizeDefault,
+        FontPreferences.UiFontSizeMin,
+        FontPreferences.UiFontSizeMax,
+      );
+      const previousCodeFontSize = normalizeFontPreference(
+        previousConfig.codeFontSize,
+        FontPreferences.CodeFontSizeDefault,
+        FontPreferences.CodeFontSizeMin,
+        FontPreferences.CodeFontSizeMax,
+      );
       let savedPluginPendingChanges: PluginPendingChanges | null = null;
 
       await configService.updateConfig({
@@ -2969,6 +3219,8 @@ const Settings: React.FC<SettingsProps> = ({
         },
         providers: normalizedProviders, // Save all providers configuration
         theme,
+        uiFontSize,
+        codeFontSize,
         language,
         useSystemProxy,
         sqliteAutoBackupEnabled,
@@ -2986,6 +3238,7 @@ const Settings: React.FC<SettingsProps> = ({
 
       // 应用主题
       themeService.setTheme(theme);
+      applyTypographyPreferences({ uiFontSize, codeFontSize });
 
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
@@ -3025,6 +3278,7 @@ const Settings: React.FC<SettingsProps> = ({
           memoryEnabled: coworkMemoryEnabled,
           memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
           skipMissedJobs,
+          openClawHeartbeatEnabled,
           embeddingEnabled,
           embeddingProvider,
           embeddingModel,
@@ -3096,6 +3350,12 @@ const Settings: React.FC<SettingsProps> = ({
         if (previousThemeId !== themeId) {
           reportAppearanceSettingChanged('themeId', themeId, previousThemeId);
         }
+        if (previousUiFontSize !== uiFontSize) {
+          reportAppearanceSettingChanged('uiFontSize', uiFontSize, previousUiFontSize);
+        }
+        if (previousCodeFontSize !== codeFontSize) {
+          reportAppearanceSettingChanged('codeFontSize', codeFontSize, previousCodeFontSize);
+        }
         const browserSettingParams = buildBrowserSettingAnalyticsParams(
           previousBrowserWebAccess,
           normalizedBrowserWebAccess,
@@ -3105,6 +3365,13 @@ const Settings: React.FC<SettingsProps> = ({
         }
         if (previousAgentEngine !== coworkAgentEngine) {
           reportAgentEngineSettingChanged('agentEngine', coworkAgentEngine, previousAgentEngine);
+        }
+        if (previousOpenClawHeartbeatEnabled !== openClawHeartbeatEnabled) {
+          reportAgentEngineSettingChanged(
+            'openClawHeartbeatEnabled',
+            openClawHeartbeatEnabled,
+            previousOpenClawHeartbeatEnabled,
+          );
         }
         if (previousOpenClawSessionKeepAlive !== openClawSessionKeepAlive) {
           reportAgentEngineSettingChanged(
@@ -3962,6 +4229,22 @@ const Settings: React.FC<SettingsProps> = ({
     return () => document.removeEventListener('keydown', handleSettingsTabShortcut);
   }, [shortcuts, sidebarTabs, handleTabChange]);
 
+  const handleUiFontSizeChange = useCallback((nextValue: number) => {
+    setUiFontSize(nextValue);
+    applyTypographyPreferences({
+      uiFontSize: nextValue,
+      codeFontSize,
+    });
+  }, [codeFontSize]);
+
+  const handleCodeFontSizeChange = useCallback((nextValue: number) => {
+    setCodeFontSize(nextValue);
+    applyTypographyPreferences({
+      uiFontSize,
+      codeFontSize: nextValue,
+    });
+  }, [uiFontSize]);
+
   const renderAppearanceSettings = () => (
     <div className="space-y-8">
       <div>
@@ -4125,6 +4408,31 @@ const Settings: React.FC<SettingsProps> = ({
             </>
           );
         })()}
+
+        <div className="mt-5 divide-y divide-border rounded-xl border border-border bg-surface">
+          <div className="px-4 py-3">
+            <SettingsNumberInputRow
+              id="ui-font-size"
+              title={i18nService.t('uiFontSize')}
+              description={i18nService.t('uiFontSizeDescription')}
+              value={uiFontSize}
+              min={FontPreferences.UiFontSizeMin}
+              max={FontPreferences.UiFontSizeMax}
+              onChange={handleUiFontSizeChange}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <SettingsNumberInputRow
+              id="code-font-size"
+              title={i18nService.t('codeFontSize')}
+              description={i18nService.t('codeFontSizeDescription')}
+              value={codeFontSize}
+              min={FontPreferences.CodeFontSizeMin}
+              max={FontPreferences.CodeFontSizeMax}
+              onChange={handleCodeFontSizeChange}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -4343,6 +4651,23 @@ const Settings: React.FC<SettingsProps> = ({
                         )}
                       </div>
                     </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h4 className="text-sm font-medium text-foreground">
+                    {i18nService.t('openClawBackgroundRuntimeTitle')}
+                  </h4>
+
+                  <div className="rounded-xl border border-border bg-surface p-4">
+                    <SettingsToggleRow
+                      title={i18nService.t('openClawHeartbeatEnabled')}
+                      description={i18nService.t('openClawHeartbeatEnabledDescription')}
+                      checked={openClawHeartbeatEnabled}
+                      onToggle={() => {
+                        setOpenClawHeartbeatEnabled((prev) => !prev);
+                      }}
+                    />
                   </div>
                 </section>
 
@@ -4679,6 +5004,10 @@ const Settings: React.FC<SettingsProps> = ({
             openaiOAuthPhase={openaiOAuthPhase}
             setOpenaiOAuthPhase={setOpenaiOAuthPhase}
             openaiOAuthStatus={openaiOAuthStatus}
+            xaiIsOAuthMode={xaiIsOAuthMode}
+            xaiOAuthPhase={xaiOAuthPhase}
+            setXaiOAuthPhase={setXaiOAuthPhase}
+            xaiOAuthStatus={xaiOAuthStatus}
             copilotAuthStatus={copilotAuthStatus}
             copilotUserCode={copilotUserCode}
             copilotVerificationUri={copilotVerificationUri}
@@ -4707,6 +5036,9 @@ const Settings: React.FC<SettingsProps> = ({
             handleOpenAIOAuthLogin={handleOpenAIOAuthLogin}
             handleCancelOpenAIOAuthLogin={handleCancelOpenAIOAuthLogin}
             handleOpenAIOAuthLogout={handleOpenAIOAuthLogout}
+            handleXaiOAuthLogin={handleXaiOAuthLogin}
+            handleCancelXaiOAuthLogin={handleCancelXaiOAuthLogin}
+            handleXaiOAuthLogout={handleXaiOAuthLogout}
             handleCopilotSignIn={handleCopilotSignIn}
             handleCopilotSignOut={handleCopilotSignOut}
             handleCopilotCancelAuth={handleCopilotCancelAuth}
@@ -5050,21 +5382,29 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
 
             {/* Footer buttons */}
-            <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
-              <button
-                type="button"
-                onClick={guardedClose}
-                className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
+            <div className="relative shrink-0">
+              <div
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-x-0 bottom-full h-10 bg-gradient-to-t from-background to-transparent transition-opacity duration-200 ${
+                  footerFadeVisible ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              <div className="flex justify-end space-x-4 px-6 pb-5 pt-3 bg-background">
+                <button
+                  type="button"
+                  onClick={guardedClose}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              </div>
             </div>
           </form>
 

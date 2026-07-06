@@ -3,6 +3,7 @@ import type {
   CoworkContextUsageSource,
   CoworkForkMode,
 } from '../../shared/cowork/constants';
+import type { CoworkGoal } from '../../shared/cowork/goal';
 import type {
   CoworkImageAttachmentPayload,
   CoworkImageAttachmentPreview,
@@ -87,6 +88,10 @@ export interface CoworkMessageMetadata {
   model?: string;
   agentName?: string;
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
+  goalSetting?: {
+    action: 'start' | 'create' | 'set';
+    objective: string;
+  };
   localMediaAttachments?: Array<{
     localPath: string;
     mimeType?: string;
@@ -158,6 +163,7 @@ export interface CoworkSession {
   forkWorkspacePath?: string | null;
   forkGitBranch?: string | null;
   forkGitBaseRef?: string | null;
+  goal?: CoworkGoal | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -174,6 +180,7 @@ export interface CoworkConfig {
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
   skipMissedJobs: boolean;
+  openClawHeartbeatEnabled: boolean;
   embeddingEnabled: boolean;
   embeddingProvider: string;
   embeddingModel: string;
@@ -199,6 +206,7 @@ export type CoworkConfigUpdate = Partial<Pick<
   | 'memoryGuardLevel'
   | 'memoryUserMemoriesMaxItems'
   | 'skipMissedJobs'
+  | 'openClawHeartbeatEnabled'
   | 'embeddingEnabled'
   | 'embeddingProvider'
   | 'embeddingModel'
@@ -295,6 +303,7 @@ export interface CoworkSessionSummary {
   parentSessionId?: string | null;
   forkedAt?: number | null;
   forkMode?: CoworkForkMode;
+  goal?: CoworkGoal | null;
   createdAt: number;
   updatedAt: number;
 }

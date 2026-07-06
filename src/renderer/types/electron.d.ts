@@ -12,6 +12,7 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import type { CoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   DataMigrationBackupResult,
@@ -39,7 +40,19 @@ import type {
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
 } from '../../shared/openclawEngine/constants';
-import type { ShellOpenFailureReason } from '../../shared/shell/constants';
+import type {
+  ShareDeploymentAnalyzeProjectInput,
+  ShareDeploymentCreateNodeInput,
+  ShareDeploymentDetectCandidatesInput,
+  ShareDeploymentDetectCandidatesResult,
+  ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentProjectAnalysis,
+  ShareDeploymentResult,
+} from '../../shared/shareDeployment/constants';
+import type {
+  ShellGetBrowserAppsInput,
+  ShellOpenFailureReason,
+} from '../../shared/shell/constants';
 interface ApiResponse {
   ok: boolean;
   status: number;
@@ -140,6 +153,7 @@ interface CoworkConfig {
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
   skipMissedJobs: boolean;
+  openClawHeartbeatEnabled: boolean;
   embeddingEnabled: boolean;
   embeddingProvider: string;
   embeddingModel: string;
@@ -162,6 +176,7 @@ type CoworkConfigUpdate = Partial<
     | 'memoryGuardLevel'
     | 'memoryUserMemoriesMaxItems'
     | 'skipMissedJobs'
+    | 'openClawHeartbeatEnabled'
     | 'embeddingEnabled'
     | 'embeddingProvider'
     | 'embeddingModel'
@@ -262,6 +277,32 @@ interface EmailConnectivityTestResult {
   checks: EmailConnectivityCheck[];
 }
 
+interface EmailSkillAccountConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider?: string;
+  email: string;
+  password?: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapRejectUnauthorized?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpRejectUnauthorized?: boolean;
+  smtpFrom?: string;
+  mailbox?: string;
+  requireSendConfirmation?: boolean;
+}
+
+interface EmailSkillAccountsConfig {
+  version: 1;
+  defaultAccountId: string;
+  accounts: EmailSkillAccountConfig[];
+}
+
 type CoworkPermissionResult =
   | {
       behavior: 'allow';
@@ -337,6 +378,7 @@ interface McpMarketplaceData {
   servers: McpMarketplaceServer[];
 }
 
+import type { AgentLegacyIdentityCleanupResult } from '@shared/agent';
 import type { Platform } from '@shared/platform';
 
 import type { Agent, PresetAgent } from './agent';
@@ -376,6 +418,19 @@ interface ProfileSummaryData {
   availableResetCount?: number;
   availablePromoSubscriptionCount?: number;
   creditsResetCampaign?: CreditsResetCampaignStatusData;
+}
+
+interface ClientBannerData {
+  id: number;
+  placement: string;
+  activityDescription: string;
+  weight?: number;
+  status?: number;
+  linkUrl: string;
+  imageUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  updatedAt?: string;
 }
 
 interface HtmlShareResult {
@@ -443,6 +498,17 @@ interface IElectronAPI {
       skillId: string,
       config: Record<string, string>,
     ) => Promise<{ success: boolean; error?: string }>;
+    getEmailAccountsConfig: (
+      skillId: string,
+    ) => Promise<{ success: boolean; config?: EmailSkillAccountsConfig; error?: string }>;
+    setEmailAccountsConfig: (
+      skillId: string,
+      config: EmailSkillAccountsConfig,
+    ) => Promise<{ success: boolean; error?: string }>;
+    testEmailAccountConnectivity: (
+      skillId: string,
+      account: EmailSkillAccountConfig,
+    ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     testEmailConnectivity: (
       skillId: string,
       config: Record<string, string>,
@@ -468,8 +534,15 @@ interface IElectronAPI {
     delete: (
       id: string,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    deleteByRegistryId: (
+      registryId: string,
+    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     setEnabled: (options: {
       id: string;
+      enabled: boolean;
+    }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    setEnabledByRegistryId: (options: {
+      registryId: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     retryLaunchResolution: (
@@ -478,6 +551,11 @@ interface IElectronAPI {
     fetchMarketplace: () => Promise<{
       success: boolean;
       data?: McpMarketplaceData;
+      error?: string;
+    }>;
+    connectQichacha: () => Promise<{
+      success: boolean;
+      servers?: McpServerConfigIPC[];
       error?: string;
     }>;
     onChanged: (callback: () => void) => () => void;
@@ -531,6 +609,7 @@ interface IElectronAPI {
         pinned?: boolean;
       },
     ) => Promise<Agent>;
+    cleanupLegacyIdentityBlock: (id: string) => Promise<AgentLegacyIdentityCleanupResult>;
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
@@ -663,6 +742,13 @@ interface IElectronAPI {
       code?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
+    runGoalCommand: (options: { sessionId: string; command: string }) => Promise<{
+      success: boolean;
+      goal?: CoworkGoal | null;
+      error?: string;
+      code?: string;
+      engineStatus?: OpenClawEngineStatus;
+    }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
@@ -751,6 +837,9 @@ interface IElectronAPI {
       content: string;
       defaultFileName?: string;
       fileExtension?: string;
+    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+    exportSessionDiagnostics: (options: {
+      sessionId: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     cancelMediaTask: (taskId: string) => Promise<{ success: boolean; message?: string }>;
     getSubTaskHistory: (options: {
@@ -844,6 +933,9 @@ interface IElectronAPI {
     onStreamContextUsage?: (
       callback: (data: { sessionId: string; usage: CoworkContextUsage }) => void,
     ) => () => void;
+    onStreamGoal?: (
+      callback: (data: { sessionId: string; goal: CoworkGoal | null }) => void,
+    ) => () => void;
     onStreamContextMaintenance?: (
       callback: (data: { sessionId: string; active: boolean }) => void,
     ) => () => void;
@@ -856,6 +948,9 @@ interface IElectronAPI {
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
+    onSessionModelOverrideChanged?: (
+      callback: (data: { sessionId: string; modelOverride: string }) => void,
+    ) => () => void;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
@@ -910,8 +1005,17 @@ interface IElectronAPI {
       apps: Array<{ name: string; path: string; isDefault: boolean; icon?: string }>;
       error?: string;
     }>;
+    getBrowserApps: (options?: ShellGetBrowserAppsInput) => Promise<{
+      success: boolean;
+      apps: Array<{ name: string; path: string; isDefault: boolean; icon?: string }>;
+      error?: string;
+    }>;
     openPathWithApp: (
       filePath: string,
+      appPath: string,
+    ) => Promise<ShellActionResponse>;
+    openUrlWithApp: (
+      url: string,
       appPath: string,
     ) => Promise<ShellActionResponse>;
   };
@@ -980,6 +1084,19 @@ interface IElectronAPI {
     }) => Promise<HtmlShareResult>;
     disable: (shareId: string) => Promise<HtmlShareResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
+  };
+  shareDeployment: {
+    detectProjectCandidates: (
+      options: ShareDeploymentDetectCandidatesInput,
+    ) => Promise<ShareDeploymentDetectCandidatesResult>;
+    analyzeProjectDirectory: (
+      options: ShareDeploymentAnalyzeProjectInput,
+    ) => Promise<ShareDeploymentProjectAnalysis>;
+    createNodeDeployment: (
+      options: ShareDeploymentCreateNodeInput,
+    ) => Promise<ShareDeploymentResult>;
+    get: (deploymentId: string) => Promise<ShareDeploymentResult>;
+    getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) => Promise<ShareDeploymentResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
@@ -1430,6 +1547,8 @@ interface IElectronAPI {
       error?: string;
     }>;
     getProfileSummary: () => Promise<{ success: boolean; data?: ProfileSummaryData }>;
+    getActiveClientBanner: () => Promise<{ success: boolean; data?: ClientBannerData | null }>;
+    getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
@@ -1578,6 +1697,28 @@ interface IElectronAPI {
       | { loggedIn: true; email: string | null; accountId: string | null; expiresAt: number }
       | { loggedIn: false }
     >;
+  };
+  xaiOAuth: {
+    start: () => Promise<
+      | { success: true; email: string | null; flow: 'browser' | 'device-code' }
+      | { success: false; error: string }
+    >;
+    cancel: () => Promise<void>;
+    logout: () => Promise<void>;
+    status: () => Promise<{
+      loggedIn: boolean;
+      email?: string;
+      displayName?: string;
+      expiresAt?: number;
+    }>;
+    onDeviceCode: (
+      callback: (info: {
+        userCode: string;
+        verificationUri: string;
+        verificationUriComplete?: string;
+        expiresInMs: number;
+      }) => void,
+    ) => () => void;
   };
 }
 
