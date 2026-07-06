@@ -14,9 +14,14 @@ import {
 } from '../../shared/cowork/constants';
 import { normalizeCoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
+import {
+  type CoworkSteerRequest,
+  CoworkSteerStatus,
+} from '../../shared/cowork/steer';
 import { store } from '../store';
 import {
   addMessage,
+  addPendingSteer,
   addSession,
   appendSessions,
   clearCurrentSession,
@@ -45,6 +50,7 @@ import {
   updateSessionPinned,
   updateSessionStatus,
   updateSessionTitle,
+  updateSteerStatus,
   updateToolUseMediaStatus,
 } from '../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../store/slices/skillSlice';
@@ -838,6 +844,86 @@ class CoworkService {
     }
 
     return true;
+  }
+
+  async submitSteer(options: CoworkSteerRequest): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.submitSteer) {
+      console.error('Cowork steer API not available');
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkSteerUnavailable'),
+      }));
+      return false;
+    }
+
+    const text = options.text.trim();
+    if (!text) {
+      return false;
+    }
+
+    const now = Date.now();
+    store.dispatch(addPendingSteer({
+      id: options.clientSteerId,
+      sessionId: options.sessionId,
+      text,
+      status: CoworkSteerStatus.Pending,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    this.logDiagnostic(
+      'debug',
+      `submitting steer ${options.clientSteerId} for session ${options.sessionId}; chars=${text.length}`,
+    );
+
+    try {
+      const result = await cowork.submitSteer({
+        ...options,
+        text,
+      });
+      if (result?.success && result.status === CoworkSteerStatus.Accepted) {
+        store.dispatch(updateSteerStatus({
+          sessionId: options.sessionId,
+          steerId: options.clientSteerId,
+          status: CoworkSteerStatus.Accepted,
+        }));
+        this.logDiagnostic(
+          'debug',
+          `steer ${options.clientSteerId} accepted for session ${options.sessionId}`,
+        );
+        return true;
+      }
+
+      const error = result?.error || i18nService.t('coworkSteerRejected');
+      store.dispatch(updateSteerStatus({
+        sessionId: options.sessionId,
+        steerId: options.clientSteerId,
+        status: CoworkSteerStatus.Rejected,
+        error,
+        reason: result?.reason,
+      }));
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: error }));
+      this.logDiagnostic(
+        'warn',
+        `steer ${options.clientSteerId} rejected for session ${options.sessionId}; `
+        + `reason=${result?.reason ?? 'unknown'}; error=${error}`,
+      );
+      return false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to submit steer input';
+      store.dispatch(updateSteerStatus({
+        sessionId: options.sessionId,
+        steerId: options.clientSteerId,
+        status: CoworkSteerStatus.Rejected,
+        error: message,
+      }));
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+      this.logDiagnostic(
+        'error',
+        `steer ${options.clientSteerId} failed for session ${options.sessionId}; error=${message}`,
+      );
+      return false;
+    }
   }
 
   async runGoalCommand(options: { sessionId: string; command: string }): Promise<boolean> {
