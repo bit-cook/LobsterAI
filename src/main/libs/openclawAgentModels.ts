@@ -33,13 +33,26 @@ const LegacyQualifiedProviderMigration: Record<string, readonly string[]> = {
 function normalizeSubagentAllowAgentIds(agent: Agent): string[] {
   const seen = new Set<string>();
   const allowAgentIds: string[] = [];
+  const selfId = agent.id.trim();
   for (const id of agent.subagentAllowAgentIds ?? []) {
     const normalized = id.trim();
-    if (!normalized || seen.has(normalized)) continue;
+    if (!normalized || normalized === selfId || seen.has(normalized)) continue;
     seen.add(normalized);
     allowAgentIds.push(normalized);
   }
   return allowAgentIds;
+}
+
+function buildSubagentConfig(agent: Agent): Record<string, unknown> | undefined {
+  const selectedAgentIds = normalizeSubagentAllowAgentIds(agent);
+  const selfId = agent.id.trim();
+  if (!selfId || selectedAgentIds.length === 0) {
+    return undefined;
+  }
+  return {
+    allowAgents: [selfId, ...selectedAgentIds],
+    requireAgentId: true,
+  };
 }
 
 export function parsePrimaryModelRef(primaryModel: string): ManagedSessionModelTarget | null {
@@ -205,7 +218,7 @@ export function buildAgentEntry(
   });
   const primaryModel = qualified.status === 'qualified' ? qualified.primaryModel : fallbackPrimaryModel;
   const legacyIcon = isDesignedAgentAvatarIcon(agent.icon) ? '' : agent.icon;
-  const subagentAllowAgentIds = normalizeSubagentAllowAgentIds(agent);
+  const subagentConfig = buildSubagentConfig(agent);
 
   return {
     id: agent.id,
@@ -217,11 +230,7 @@ export function buildAgentEntry(
       },
     } : {}),
     ...(agent.skillIds && agent.skillIds.length > 0 ? { skills: agent.skillIds } : {}),
-    ...(subagentAllowAgentIds.length > 0 ? {
-      subagents: {
-        allowAgents: subagentAllowAgentIds,
-      },
-    } : {}),
+    ...(subagentConfig ? { subagents: subagentConfig } : {}),
     ...(options?.workspace ? { workspace: options.workspace } : {}),
     ...(agent.workingDirectory?.trim() ? { cwd: path.resolve(agent.workingDirectory.trim()) } : {}),
     model: {
