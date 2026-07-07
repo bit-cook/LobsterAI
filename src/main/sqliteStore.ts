@@ -258,6 +258,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         parent_session_id TEXT NOT NULL,
         session_key TEXT,
+        child_cowork_session_id TEXT,
         agent_id TEXT,
         task TEXT,
         label TEXT,
@@ -270,7 +271,10 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent_session_id
       ON subagent_runs(parent_session_id);
     `);
-
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_subagent_runs_agent_id
+      ON subagent_runs(agent_id);
+    `);
     // Subagent messages table — stores fetched conversation history locally
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS subagent_messages (
@@ -295,6 +299,19 @@ export class SqliteStore {
         this.db.exec('ALTER TABLE subagent_runs ADD COLUMN messages_persisted INTEGER NOT NULL DEFAULT 0;');
         this.didRunMigration = true;
       }
+      if (!subagentCols.some(c => c.name === 'child_cowork_session_id')) {
+        this.db.exec('ALTER TABLE subagent_runs ADD COLUMN child_cowork_session_id TEXT;');
+        this.didRunMigration = true;
+      }
+    } catch {
+      // Migration not needed
+    }
+
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_subagent_runs_child_cowork_session_id
+        ON subagent_runs(child_cowork_session_id);
+      `);
     } catch {
       // Migration not needed
     }

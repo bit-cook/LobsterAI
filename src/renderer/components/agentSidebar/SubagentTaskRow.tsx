@@ -48,7 +48,7 @@ const SubagentTaskRow: React.FC<SubagentTaskRowProps> = ({
   analyticsParams,
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
-  const displayName = subagent.label ?? subagent.agentId ?? i18nService.t('subagentUnnamed');
+  const displayName = subagent.label ?? subagent.task ?? subagent.agentId ?? i18nService.t('subagentUnnamed');
   const duration = formatDuration(
     subagent.createdAt,
     subagent.status === 'running' ? null : subagent.endedAt,

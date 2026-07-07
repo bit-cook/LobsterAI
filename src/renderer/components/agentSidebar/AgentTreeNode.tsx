@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
+import type { SubagentSessionSummary } from '../../types/cowork';
 import { getAgentDisplayName, isDefaultAgentId, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import AgentConfirmDialog from '../agent/AgentConfirmDialog';
@@ -14,6 +15,7 @@ import TrashIcon from '../icons/TrashIcon';
 import AgentTaskRow from './AgentTaskRow';
 import { createSessionBatchKey } from './batchSelection';
 import ExpandAgentTasksRow from './ExpandAgentTasksRow';
+import SubagentTaskRow from './SubagentTaskRow';
 import type { AgentSidebarAgentNode, AgentSidebarTaskNode } from './types';
 
 interface AgentTreeNodeProps {
@@ -31,7 +33,9 @@ interface AgentTreeNodeProps {
   onLoadMoreTasks: (agentId: string) => void;
   onCollapseTasks: (agentId: string) => void;
   onSelectTask: (task: AgentSidebarTaskNode) => void;
+  onSelectSubagent: (subagent: SubagentSessionSummary) => void;
   onDeleteTask: (task: AgentSidebarTaskNode) => Promise<void>;
+  onDeleteSubagent: (subagent: SubagentSessionSummary) => Promise<void>;
   onShareTask: (task: AgentSidebarTaskNode) => Promise<void>;
   onToggleTaskPin: (task: AgentSidebarTaskNode, pinned: boolean) => Promise<void>;
   onRenameTask: (task: AgentSidebarTaskNode, title: string) => Promise<void>;
@@ -94,7 +98,9 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   onLoadMoreTasks,
   onCollapseTasks,
   onSelectTask,
+  onSelectSubagent,
   onDeleteTask,
+  onDeleteSubagent,
   onShareTask,
   onToggleTaskPin,
   onRenameTask,
@@ -116,6 +122,26 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   const isBatchAgent = isBatchMode && batchAgentId === agent.id;
   const isOutsideBatchAgent = isBatchMode && batchAgentId !== null && batchAgentId !== agent.id;
   const agentName = getAgentDisplayName(agent);
+  const hasVisibleTasks = agent.tasks.length > 0 || agent.subagentTasks.length > 0;
+  const visibleItems = [
+    ...agent.tasks.map((task) => ({
+      kind: 'session' as const,
+      id: `session:${task.id}`,
+      timestamp: task.updatedAt || task.createdAt,
+      pinned: task.pinned,
+      task,
+    })),
+    ...agent.subagentTasks.map((subagent) => ({
+      kind: 'subagent' as const,
+      id: `subagent:${subagent.id}`,
+      timestamp: subagent.parentUpdatedAt ?? subagent.endedAt ?? subagent.createdAt,
+      pinned: false,
+      subagent,
+    })),
+  ].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return b.timestamp - a.timestamp;
+  });
   const menuItemClassName =
     'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
   const dangerMenuItemClassName =
@@ -419,7 +445,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
             aria-hidden={!agent.isExpanded}
           >
             <div className="min-w-0 max-w-full space-y-0.5">
-              {agent.hasLoadError && agent.tasks.length === 0 && (
+              {agent.hasLoadError && !hasVisibleTasks && (
                 <button
                   type="button"
                   onClick={() => onRetryLoadTasks(agent.id)}
@@ -429,40 +455,53 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
                 </button>
               )}
 
-              {agent.isLoadingTasks && agent.tasks.length === 0 && (
+              {agent.isLoadingTasks && !hasVisibleTasks && (
                 <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-secondary">
                   {i18nService.t('loading')}
                 </div>
               )}
 
-              {!agent.isLoadingTasks && !agent.hasLoadError && agent.tasks.length === 0 && (
+              {!agent.isLoadingTasks && !agent.hasLoadError && !hasVisibleTasks && (
                 <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[length:var(--lobster-text-sidebarCompact)] text-secondary">
                   {i18nService.t('myAgentSidebarNoTasks')}
                 </div>
               )}
 
-              {agent.tasks.map((task) => (
-                <React.Fragment key={task.id}>
+              {visibleItems.map((item) => (
+                item.kind === 'session' ? (
                   <AgentTaskRow
-                    task={task}
+                    key={item.id}
+                    task={item.task}
                     isBatchMode={isBatchAgent}
-                    isSelected={selectedKeys.has(createSessionBatchKey(task.id))}
+                    isSelected={selectedKeys.has(createSessionBatchKey(item.task.id))}
                     isSelectionDisabled={isOutsideBatchAgent}
                     showBatchOption={showBatchOption && !isBatchMode}
-                    onSelect={() => onSelectTask(task)}
-                    onDelete={() => onDeleteTask(task)}
-                    onShare={() => onShareTask(task)}
-                    onTogglePin={(pinned) => onToggleTaskPin(task, pinned)}
-                    onRename={(title) => onRenameTask(task, title)}
-                    onToggleSelection={() => onToggleSelection(createSessionBatchKey(task.id), task.agentId)}
-                    onEnterBatchMode={() => onEnterBatchMode(task)}
+                    onSelect={() => onSelectTask(item.task)}
+                    onDelete={() => onDeleteTask(item.task)}
+                    onShare={() => onShareTask(item.task)}
+                    onTogglePin={(pinned) => onToggleTaskPin(item.task, pinned)}
+                    onRename={(title) => onRenameTask(item.task, title)}
+                    onToggleSelection={() => onToggleSelection(createSessionBatchKey(item.task.id), item.task.agentId)}
+                    onEnterBatchMode={() => onEnterBatchMode(item.task)}
                     onSidebarAction={onSidebarAction}
-                    analyticsParams={getTaskActionParams?.(task)}
+                    analyticsParams={getTaskActionParams?.(item.task)}
                   />
-                </React.Fragment>
+                ) : (
+                  <SubagentTaskRow
+                    key={item.id}
+                    subagent={item.subagent}
+                    onSelect={() => onSelectSubagent(item.subagent)}
+                    onDelete={() => onDeleteSubagent(item.subagent)}
+                    onSidebarAction={onSidebarAction}
+                    analyticsParams={{
+                      isCurrentSubagent: false,
+                      subagentStatus: item.subagent.status,
+                    }}
+                  />
+                )
               ))}
 
-              {agent.hasLoadError && agent.tasks.length > 0 && (
+              {agent.hasLoadError && hasVisibleTasks && (
                 <button
                   type="button"
                   onClick={() => onRetryLoadTasks(agent.id)}

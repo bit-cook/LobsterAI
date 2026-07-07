@@ -24,7 +24,7 @@ import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitId
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus } from '../../types/cowork';
+import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus, type SubagentSessionSummary } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -646,6 +646,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       window.removeEventListener(CoworkUiEvent.ShortcutStopSession, handleStopSession);
     };
   }, [handleStopSession]);
+
+  useEffect(() => {
+    const handleSelectSubagent = (event: Event) => {
+      const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
+      if (!detail?.childCoworkSessionId) return;
+      void coworkService.loadSession(detail.childCoworkSessionId);
+    };
+
+    window.addEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagent);
+    return () => {
+      window.removeEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagent);
+    };
+  }, []);
 
   useEffect(() => {
     if (!currentSession || currentSession.status !== 'running') return;

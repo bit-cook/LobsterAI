@@ -33,6 +33,7 @@ export interface AgentSidebarAgentNode extends AgentSidebarAgentSummary {
   isLoadingTasks: boolean;
   hasLoadError: boolean;
   tasks: AgentSidebarTaskNode[];
+  subagentTasks: SubagentSessionSummary[];
 }
 
 export interface AgentSidebarPreferenceState {

@@ -3382,6 +3382,117 @@ test('chat final reuses committed assistant segment after sessions_yield history
   }
 });
 
+test('chat history sync reconstructs missed sessions_spawn tools after yield', async () => {
+  vi.useFakeTimers();
+  try {
+    const startupText = 'product-analyst completed. Now starting ts-engineer and qa-reviewer.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'coordinate a small change', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: startupText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+      { id: 'msg-3', type: 'tool_use', content: 'Using tool: sessions_spawn', timestamp: 3, metadata: { toolUseId: 'call-product', toolName: 'sessions_spawn' } },
+      { id: 'msg-4', type: 'tool_result', content: '{"status":"accepted","childSessionKey":"agent:product-analyst:subagent:one"}', timestamp: 4, metadata: { toolUseId: 'call-product' } },
+    ]);
+
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async () => ({
+        messages: [
+          { role: 'user', content: 'coordinate a small change' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: startupText },
+              {
+                type: 'toolCall',
+                id: 'call-ts',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'ts-engineer',
+                  task: 'implement the change',
+                },
+              },
+              {
+                type: 'toolCall',
+                id: 'call-qa',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'qa-reviewer',
+                  task: 'review the diff',
+                },
+              },
+            ],
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-qa',
+            content: '{"status":"accepted","childSessionKey":"agent:qa-reviewer:subagent:three"}',
+          },
+        ],
+      }),
+    };
+
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-yield-final',
+      sessionKey,
+      message: { role: 'assistant', content: startupText },
+    }, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolInput?.agentId === 'ts-engineer'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-qa'
+      && String(message.content).includes('agent:qa-reviewer:subagent:three')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+        task: 'implement the change',
+      }),
+      expect.objectContaining({
+        id: 'call-qa',
+        parentSessionId: session.id,
+        sessionKey: 'agent:qa-reviewer:subagent:three',
+        agentId: 'qa-reviewer',
+        task: 'review the diff',
+      }),
+    ]));
+
+    await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('chat final reuses identical finalized thinking from the current turn', async () => {
   vi.useFakeTimers();
   try {

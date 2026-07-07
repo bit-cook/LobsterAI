@@ -16,6 +16,7 @@ const setupDb = (): void => {
       id TEXT PRIMARY KEY,
       parent_session_id TEXT NOT NULL,
       session_key TEXT,
+      child_cowork_session_id TEXT,
       agent_id TEXT,
       task TEXT,
       label TEXT,
@@ -261,4 +262,36 @@ test('deleted subagent run is not reinserted by late spawn results', async () =>
 
   expect(deleted).toBe(true);
   expect(runStore.getSubagentRun('run-1')).toBeNull();
+});
+
+test('onHistorySpawnResult inserts a run without realtime tool state', () => {
+  const tracker = new SubagentTracker(runStore, messageStore, () => null);
+
+  tracker.onHistorySpawnResult({
+    toolCallId: 'call-spawn-worker',
+    parentSessionId: 'parent-1',
+    args: {
+      agentId: 'worker',
+      task: 'inspect files',
+      label: 'Worker',
+    },
+    resultText: JSON.stringify({
+      status: 'accepted',
+      childSessionKey: 'agent:worker:subagent:abc',
+    }),
+    createdAt: 1234,
+  });
+
+  expect(runStore.getSubagentRun('call-spawn-worker')).toEqual({
+    id: 'call-spawn-worker',
+    parentSessionId: 'parent-1',
+    sessionKey: 'agent:worker:subagent:abc',
+    childCoworkSessionId: expect.any(String),
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'Worker',
+    status: 'running',
+    createdAt: 1234,
+    endedAt: null,
+  });
 });

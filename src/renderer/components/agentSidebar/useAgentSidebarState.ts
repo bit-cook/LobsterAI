@@ -9,7 +9,7 @@ import {
   selectCurrentSessionId,
   selectUnreadSessionIds,
 } from '../../store/selectors/coworkSelectors';
-import type { CoworkSessionSummary } from '../../types/cowork';
+import type { CoworkSessionSummary, SubagentSessionSummary } from '../../types/cowork';
 import { CoworkSessionStatusValue } from '../../types/cowork';
 import {
   AgentSidebarIndicator,
@@ -165,6 +165,7 @@ export const useAgentSidebarState = () => {
   const [expandedAgentIds, setExpandedAgentIds] = useState<string[]>([]);
   const [expandedTaskListAgentIds, setExpandedTaskListAgentIds] = useState<string[]>([]);
   const [taskPreviewsByAgentId, setTaskPreviewsByAgentId] = useState<Record<string, CoworkSessionSummary[]>>({});
+  const [subagentPreviewsByAgentId, setSubagentPreviewsByAgentId] = useState<Record<string, SubagentSessionSummary[]>>({});
   const [hasMoreTasksByAgentId, setHasMoreTasksByAgentId] = useState<Record<string, boolean>>({});
   const [loadingAgentIds, setLoadingAgentIds] = useState<string[]>([]);
   const [failedAgentIds, setFailedAgentIds] = useState<string[]>([]);
@@ -279,7 +280,12 @@ export const useAgentSidebarState = () => {
     setAgentFailed(agentId, false);
 
     try {
-      const result = await coworkService.listSessionsForAgentPreview(agentId, limit, offset);
+      const [result, subagentResult] = await Promise.all([
+        coworkService.listSessionsForAgentPreview(agentId, limit, offset),
+        offset === 0
+          ? coworkService.listSubagentSessionsForAgentPreview(agentId, limit, 0)
+          : Promise.resolve({ success: true, runs: [], hasMore: false }),
+      ]);
       if (!result.success) {
         setAgentFailed(agentId, true);
         return;
@@ -297,6 +303,12 @@ export const useAgentSidebarState = () => {
         ...previous,
         [agentId]: result.hasMore ?? false,
       }));
+      if (offset === 0 && subagentResult.success) {
+        setSubagentPreviewsByAgentId((previous) => ({
+          ...previous,
+          [agentId]: (subagentResult.runs ?? []).filter((run) => !run.childCoworkSessionId),
+        }));
+      }
     } finally {
       loadingKeysRef.current.delete(loadingKey);
       setAgentLoading(agentId, false);
@@ -330,6 +342,18 @@ export const useAgentSidebarState = () => {
     setTaskPreviewsByAgentId((previous) => {
       let changed = false;
       const next: Record<string, CoworkSessionSummary[]> = {};
+      Object.entries(previous).forEach(([agentId, tasks]) => {
+        if (activeAgentIds.has(agentId)) {
+          next[agentId] = tasks;
+          return;
+        }
+        changed = true;
+      });
+      return changed ? next : previous;
+    });
+    setSubagentPreviewsByAgentId((previous) => {
+      let changed = false;
+      const next: Record<string, SubagentSessionSummary[]> = {};
       Object.entries(previous).forEach(([agentId, tasks]) => {
         if (activeAgentIds.has(agentId)) {
           next[agentId] = tasks;
@@ -517,6 +541,17 @@ export const useAgentSidebarState = () => {
     });
   }, []);
 
+  const removeSubagentPreview = useCallback((agentId: string, runId: string) => {
+    setSubagentPreviewsByAgentId((previous) => {
+      const current = previous[agentId];
+      if (!current?.some((subagent) => subagent.id === runId)) return previous;
+      return {
+        ...previous,
+        [agentId]: current.filter((subagent) => subagent.id !== runId),
+      };
+    });
+  }, []);
+
   const removeAgentTaskPreviews = useCallback((agentId: string) => {
     loadedAgentIdsRef.current.delete(agentId);
     for (const key of Array.from(loadingKeysRef.current)) {
@@ -527,6 +562,12 @@ export const useAgentSidebarState = () => {
 
     setTaskPreviewsByAgentId((previous) => {
       return removeAgentSidebarAgentTaskPreviews(previous, agentId);
+    });
+    setSubagentPreviewsByAgentId((previous) => {
+      if (!Object.prototype.hasOwnProperty.call(previous, agentId)) return previous;
+      const next = { ...previous };
+      delete next[agentId];
+      return next;
     });
     setHasMoreTasksByAgentId((previous) => {
       if (!Object.prototype.hasOwnProperty.call(previous, agentId)) return previous;
@@ -543,6 +584,7 @@ export const useAgentSidebarState = () => {
   const agentNodes = useMemo<AgentSidebarAgentNode[]>(() => {
     return sortedEnabledAgents.map((agent) => {
       const taskPreviews = taskPreviewsByAgentId[agent.id] ?? [];
+      const subagentPreviews = subagentPreviewsByAgentId[agent.id] ?? [];
       const sortedTaskPreviews = sortAgentSidebarTasks(taskPreviews);
       const isTaskListExpanded = expandedTaskListAgentIdSet.has(agent.id);
       const hasMoreLoadedTasks = sortedTaskPreviews.length > AgentSidebarPageSize.Preview;
@@ -566,6 +608,7 @@ export const useAgentSidebarState = () => {
         isLoadingTasks: loadingAgentIdSet.has(agent.id),
         hasLoadError: failedAgentIdSet.has(agent.id),
         tasks,
+        subagentTasks: subagentPreviews,
       };
     });
   }, [
@@ -576,6 +619,7 @@ export const useAgentSidebarState = () => {
     hasMoreTasksByAgentId,
     loadingAgentIdSet,
     sortedEnabledAgents,
+    subagentPreviewsByAgentId,
     taskPreviewsByAgentId,
     unreadSessionIdSet,
   ]);
@@ -587,6 +631,7 @@ export const useAgentSidebarState = () => {
     removeTaskPreview,
     removeTaskPreviews,
     removeAgentTaskPreviews,
+    removeSubagentPreview,
     retryLoadTasks,
     loadMoreTasks,
     expandAgent,

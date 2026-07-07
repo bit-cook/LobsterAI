@@ -103,7 +103,7 @@ import {
   hasCronRunHistoryForSession,
   shouldReplaceLocalConversationWithCronHistory,
 } from './openclawCronRunHistorySync';
-import { SubagentTracker } from './subagentTracker';
+import { type SubagentChildSessionMaterializeParams, SubagentTracker } from './subagentTracker';
 import type {
   CoworkContextUsage,
   CoworkContinueOptions,
@@ -1528,6 +1528,123 @@ const extractSentFilePathsFromHistory = (messages: unknown[]): string[] => {
   }
   return filePaths;
 };
+
+type SessionsSpawnHistoryEntry = {
+  toolCallId: string;
+  args: Record<string, unknown>;
+  resultText: string;
+  resultTimestamp?: number;
+};
+
+const getHistoryToolCallId = (value: Record<string, unknown>): string => {
+  const candidates = [
+    value.id,
+    value.toolCallId,
+    value.tool_call_id,
+    value.toolUseId,
+    value.tool_use_id,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return '';
+};
+
+const getHistoryToolName = (value: Record<string, unknown>): string => {
+  const candidates = [value.name, value.toolName, value.tool_name];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return '';
+};
+
+const getHistoryToolArguments = (value: Record<string, unknown>): Record<string, unknown> => {
+  const candidates = [value.arguments, value.args, value.input];
+  for (const candidate of candidates) {
+    if (isRecord(candidate)) {
+      return candidate;
+    }
+    if (typeof candidate === 'string' && candidate.trim()) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (isRecord(parsed)) {
+          return parsed;
+        }
+      } catch { /* ignore malformed historical tool arguments */ }
+    }
+  }
+  return {};
+};
+
+const getHistoryMessageTimestamp = (message: Record<string, unknown>): number | undefined => {
+  const candidates = [message.timestamp, message.createdAt, message.created_at];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate;
+    }
+    if (typeof candidate === 'string' && candidate.trim()) {
+      const parsed = Date.parse(candidate);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+};
+
+const collectSessionsSpawnHistoryEntries = (messages: unknown[]): SessionsSpawnHistoryEntry[] => {
+  const spawnCalls = new Map<string, { args: Record<string, unknown>; order: number }>();
+  const spawnResults = new Map<string, { text: string; timestamp?: number }>();
+
+  messages.forEach((message, index) => {
+    if (!isRecord(message)) return;
+    const role = typeof message.role === 'string' ? message.role.trim() : '';
+    if (role === 'assistant' && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (!isRecord(block)) continue;
+        const blockType = typeof block.type === 'string' ? block.type.trim() : '';
+        if (blockType !== 'toolCall' && blockType !== 'tool_use') continue;
+        if (getHistoryToolName(block).toLowerCase() !== 'sessions_spawn') continue;
+        const toolCallId = getHistoryToolCallId(block);
+        if (!toolCallId || spawnCalls.has(toolCallId)) continue;
+        spawnCalls.set(toolCallId, {
+          args: getHistoryToolArguments(block),
+          order: index,
+        });
+      }
+      return;
+    }
+
+    if (role !== OpenClawHistoryRole.ToolResult && role !== OpenClawHistoryRole.Tool) return;
+    const toolCallId = getHistoryToolCallId(message);
+    if (!toolCallId || spawnResults.has(toolCallId)) return;
+    const text = extractMessageText(message);
+    if (!text.trim()) return;
+    spawnResults.set(toolCallId, {
+      text,
+      timestamp: getHistoryMessageTimestamp(message),
+    });
+  });
+
+  return Array.from(spawnCalls.entries())
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([toolCallId, call]) => {
+      const result = spawnResults.get(toolCallId);
+      return {
+        toolCallId,
+        args: call.args,
+        resultText: result?.text ?? '',
+        resultTimestamp: result?.timestamp,
+      };
+    })
+    .filter((entry) => entry.resultText.trim());
+};
+
+const isSubagentSessionKey = (sessionKey: string): boolean => sessionKey.includes(':subagent:');
 
 /**
  * Extract and concatenate all assistant text from the current turn in chat.history.
@@ -3225,11 +3342,85 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       emitError: (sessionId, error) => this.emit('error', sessionId, error),
     });
     if (subagentRunStore) {
-      this.subagentTracker = new SubagentTracker(subagentRunStore, subagentMessageStore ?? null, () => this.gatewayClient);
+      this.subagentTracker = new SubagentTracker(
+        subagentRunStore,
+        subagentMessageStore ?? null,
+        () => this.gatewayClient,
+        (params) => this.materializeSubagentChildSession(params),
+      );
     } else {
       // Fallback: create a no-op tracker (should not happen in production)
       this.subagentTracker = new SubagentTracker(null as unknown as SubagentRunStore, null, () => this.gatewayClient);
     }
+  }
+
+  private materializeSubagentChildSession(params: SubagentChildSessionMaterializeParams): void {
+    if (!params.childSessionKey.trim() || !params.childCoworkSessionId.trim()) return;
+    const title = this.buildSubagentChildSessionTitle(params);
+    try {
+      const status: CoworkSessionStatus = params.status === 'error' ? 'error' : 'running';
+      if (typeof this.store.upsertSubagentChildSession !== 'function') {
+        return;
+      }
+      const session = this.store.upsertSubagentChildSession({
+        id: params.childCoworkSessionId,
+        parentSessionId: params.parentSessionId,
+        childSessionKey: params.childSessionKey,
+        agentId: params.agentId || 'main',
+        title,
+        task: params.task,
+        status,
+        createdAt: params.createdAt,
+      });
+      this.rememberSessionKey(session.id, params.childSessionKey);
+      this.fullySyncedSessions.delete(session.id);
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('cowork:sessions:changed');
+        }
+      }
+      void this.syncSessionHistoryFromGateway(session.id, params.childSessionKey)
+        .catch((error) => {
+          console.warn('[OpenClawRuntime] subagent child history sync failed:', error);
+        });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] failed to materialize subagent child session:', error);
+    }
+  }
+
+  private buildSubagentChildSessionTitle(params: SubagentChildSessionMaterializeParams): string {
+    const label = params.label?.trim();
+    if (label) return label;
+    const task = params.task?.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+    if (task) return task.length > 80 ? `${task.slice(0, 77)}...` : task;
+    const agent = this.store.getAgent(params.agentId || 'main');
+    return agent?.name?.trim() || params.agentId || 'Subagent';
+  }
+
+  private finalizePassiveSubagentSession(
+    sessionKey: string,
+    status: 'done' | 'error',
+  ): void {
+    const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
+    if (!sessionId) return;
+
+    const nextStatus: CoworkSessionStatus = status === 'done' ? 'completed' : 'error';
+    this.store.updateSession(sessionId, { status: nextStatus });
+    this.emitSessionStatus(sessionId, nextStatus);
+    if (nextStatus === 'completed') {
+      this.emit('complete', sessionId, sessionKey);
+    } else {
+      this.emit('error', sessionId, 'Subagent session failed.');
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('cowork:sessions:changed');
+      }
+    }
+    void this.syncSessionHistoryFromGateway(sessionId, sessionKey)
+      .catch((error) => {
+        console.warn('[OpenClawRuntime] passive subagent final history sync failed:', error);
+      });
   }
 
   private normalizeModelRef(modelRef: string): string {
@@ -4300,7 +4491,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const agentId = options.agentId || session.agentId || 'main';
-    const sessionKey = this.toSessionKey(sessionId, agentId);
+    const persistedSessionKey = session.claudeSessionId?.trim() || '';
+    const sessionKey = persistedSessionKey || this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
     const parsedGoalBootstrapCommand = parseOpenClawGoalCommand(prompt);
     const goalBootstrapCommand = shouldBootstrapGoalFromPrompt(parsedGoalBootstrapCommand)
@@ -5078,6 +5270,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.lastAgentSeqByRunId.delete(normalizedRunId);
     this.pendingAgentEventsByRunId.delete(normalizedRunId);
     this.ensureActiveTurn(sessionId, sessionKey, normalizedRunId);
+
     const turn = this.activeTurns.get(sessionId);
     if (!turn) {
       return false;
@@ -5247,6 +5440,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn: ActiveTurn,
     historyMessages: unknown[],
   ): void {
+    this.syncSubagentSpawnsFromHistory(sessionId, turn, historyMessages);
+
     for (const msg of historyMessages) {
       if (!isRecord(msg)) continue;
 
@@ -5311,6 +5506,75 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         `len=${text.length}`,
         `prevLen=${existingText.length}`,
       );
+    }
+  }
+
+  private syncSubagentSpawnsFromHistory(
+    sessionId: string,
+    turn: ActiveTurn,
+    historyMessages: unknown[],
+  ): void {
+    const entries = collectSessionsSpawnHistoryEntries(historyMessages);
+    if (entries.length === 0) return;
+
+    const session = this.store.getSession(sessionId);
+    const existingToolUseIds = new Set<string>();
+    const existingToolResultIds = new Set<string>();
+    for (const message of session?.messages ?? []) {
+      if (!isRecord(message)) continue;
+      const metadata = isRecord(message.metadata) ? message.metadata : {};
+      const toolUseId = typeof metadata.toolUseId === 'string' ? metadata.toolUseId.trim() : '';
+      if (!toolUseId) continue;
+      if (message.type === 'tool_use') {
+        existingToolUseIds.add(toolUseId);
+      } else if (message.type === 'tool_result') {
+        existingToolResultIds.add(toolUseId);
+      }
+    }
+
+    for (const entry of entries) {
+      if (!turn.toolUseMessageIdByToolCallId.has(entry.toolCallId) && !existingToolUseIds.has(entry.toolCallId)) {
+        const toolUseMessage = this.store.addMessage(sessionId, {
+          type: 'tool_use',
+          content: 'Using tool: sessions_spawn',
+          metadata: {
+            toolName: 'sessions_spawn',
+            toolInput: entry.args,
+            toolUseId: entry.toolCallId,
+            isStreaming: false,
+            isFinal: true,
+          },
+        });
+        turn.toolUseMessageIdByToolCallId.set(entry.toolCallId, toolUseMessage.id);
+        existingToolUseIds.add(entry.toolCallId);
+        this.emit('message', sessionId, toolUseMessage);
+      }
+
+      if (!turn.toolResultMessageIdByToolCallId.has(entry.toolCallId) && !existingToolResultIds.has(entry.toolCallId)) {
+        const resultMessage = this.store.addMessage(sessionId, {
+          type: 'tool_result',
+          content: entry.resultText,
+          metadata: {
+            toolResult: entry.resultText,
+            toolUseId: entry.toolCallId,
+            isError: false,
+            isStreaming: false,
+            isFinal: true,
+          },
+        });
+        turn.toolResultMessageIdByToolCallId.set(entry.toolCallId, resultMessage.id);
+        turn.toolResultTextByToolCallId.set(entry.toolCallId, entry.resultText);
+        existingToolResultIds.add(entry.toolCallId);
+        this.emit('message', sessionId, resultMessage);
+      }
+
+      this.subagentTracker.onHistorySpawnResult({
+        toolCallId: entry.toolCallId,
+        args: entry.args,
+        resultText: entry.resultText,
+        parentSessionId: sessionId,
+        createdAt: entry.resultTimestamp,
+      });
     }
   }
 
@@ -5808,6 +6072,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionKey,
         lifecyclePhase === AgentLifecyclePhase.Error ? 'error' : 'done',
       )) {
+      this.finalizePassiveSubagentSession(
+        sessionKey,
+        lifecyclePhase === AgentLifecyclePhase.Error ? 'error' : 'done',
+      );
       return;
     }
 
@@ -6056,6 +6324,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const mappedSessionId = this.sessionIdBySessionKey.get(normalizedSessionKey);
     if (mappedSessionId) {
       return mappedSessionId;
+    }
+
+    const persistedSessionId = typeof this.store.getSessionIdByClaudeSessionId === 'function'
+      ? this.store.getSessionIdByClaudeSessionId(normalizedSessionKey)
+      : null;
+    if (persistedSessionId) {
+      this.rememberSessionKey(persistedSessionId, normalizedSessionKey);
+      return persistedSessionId;
     }
 
     const parsedManagedSession = parseManagedSessionKey(normalizedSessionKey);
@@ -6904,15 +7180,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    const sessionKey = typeof chatPayload.sessionKey === 'string' ? chatPayload.sessionKey.trim() : '';
     const sessionId = this.resolveSessionIdFromChatPayload(chatPayload);
     if (!sessionId) {
-      const sessionKey = typeof chatPayload.sessionKey === 'string' ? chatPayload.sessionKey.trim() : '';
       if ((state === 'final' || state === 'aborted' || state === 'error')
         && sessionKey
         && this.subagentTracker.tryMarkTerminalFromSessionKey(
           sessionKey,
           state === 'final' ? 'done' : 'error',
         )) {
+        this.finalizePassiveSubagentSession(
+          sessionKey,
+          state === 'final' ? 'done' : 'error',
+        );
         return;
       }
       if (state === 'final' || state === 'aborted' || state === 'error') {
@@ -6928,8 +7208,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (
+      !this.activeTurns.has(sessionId)
+      && sessionKey
+      && runId
+      && isSubagentSessionKey(sessionKey)
+      && state !== 'final'
+      && state !== 'aborted'
+      && state !== 'error'
+    ) {
+      this.ensureActiveTurn(sessionId, sessionKey, runId);
+    }
+
     const turn = this.activeTurns.get(sessionId);
     if (!turn) {
+      if ((state === 'final' || state === 'aborted' || state === 'error')
+        && sessionKey
+        && this.subagentTracker.tryMarkTerminalFromSessionKey(
+          sessionKey,
+          state === 'final' ? 'done' : 'error',
+        )) {
+        this.finalizePassiveSubagentSession(
+          sessionKey,
+          state === 'final' ? 'done' : 'error',
+        );
+        return;
+      }
       console.debug('[OpenClawRuntime] handleChatEvent — no active turn for sessionId:', sessionId);
       return;
     }
@@ -9500,6 +9804,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   listSubagentRuns(parentSessionId: string) {
     return this.subagentTracker.listSubagentRuns(parentSessionId);
+  }
+
+  listSubagentRunsByAgent(agentId: string, limit: number, offset: number) {
+    return this.subagentTracker.listSubagentRunsByAgent(agentId, limit, offset);
   }
 
   async getSubTaskHistory(

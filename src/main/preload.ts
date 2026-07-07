@@ -437,6 +437,8 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke(CoworkIpcChannel.SubTaskHistory, options),
     listSubagentSessions: (parentSessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.SubagentList, { parentSessionId }),
+    listSubagentSessionsByAgent: (options: { agentId: string; limit?: number; offset?: number }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SubagentListByAgent, options),
     deleteSubagentSession: (options: { parentSessionId: string; runId: string }) =>
       ipcRenderer.invoke(CoworkIpcChannel.SubagentDelete, options),
 

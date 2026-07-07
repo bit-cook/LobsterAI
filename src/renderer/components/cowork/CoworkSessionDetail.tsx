@@ -2117,12 +2117,48 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   ]);
 
   const handleSelectSubagent = useCallback((subagent: SubagentSessionSummary) => {
+    if (subagent.childCoworkSessionId) {
+      void coworkService.loadSession(subagent.childCoworkSessionId);
+      return;
+    }
     if (!sessionId) return;
     setSelectedSubagent(subagent);
     setSessionSubagentPreviewTabOpen(true);
     setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
     dispatch(activateArtifactSubagentTab({ sessionId }));
     void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [
+    dispatch,
+    fetchSubagents,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
+    subagents.length,
+  ]);
+
+  useEffect(() => {
+    const handleSelectSubagentEvent = (event: Event) => {
+      const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
+      if (!detail) {
+        setSelectedSubagent(null);
+        return;
+      }
+      if (detail.childCoworkSessionId) {
+        void coworkService.loadSession(detail.childCoworkSessionId);
+        return;
+      }
+      if (!sessionId || detail.parentSessionId !== sessionId) return;
+      setSelectedSubagent(detail);
+      setSessionSubagentPreviewTabOpen(true);
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+      dispatch(activateArtifactSubagentTab({ sessionId }));
+      void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+    };
+
+    window.addEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagentEvent);
+    return () => {
+      window.removeEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagentEvent);
+    };
   }, [
     dispatch,
     fetchSubagents,
