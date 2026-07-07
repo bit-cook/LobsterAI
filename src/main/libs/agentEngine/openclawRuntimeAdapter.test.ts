@@ -3595,6 +3595,91 @@ test('chat history sync reconstructs missed sessions_spawn tools after yield', a
   }
 });
 
+test('chat history sync materializes missed backfillable tool results by result toolName', async () => {
+  vi.useFakeTimers();
+  try {
+    const finalText = 'ts-engineer is running, waiting for completion.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'coordinate implementation', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: finalText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+    ]);
+
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async () => ({
+        messages: [
+          { role: 'user', content: 'coordinate implementation' },
+          { role: 'assistant', content: finalText },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            toolName: 'sessions_spawn',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-yield',
+            toolName: 'sessions_yield',
+            content: '{"status":"yielded","message":"wait for ts-engineer"}',
+          },
+        ],
+      }),
+    };
+
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-yield-final',
+      sessionKey,
+      message: { role: 'assistant', content: finalText },
+    }, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolName === 'sessions_spawn'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-yield'
+      && message.metadata?.toolName === 'sessions_yield'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-yield'
+      && String(message.content).includes('wait for ts-engineer')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+      }),
+    ]));
+
+    await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('chat final reuses identical finalized thinking from the current turn', async () => {
   vi.useFakeTimers();
   try {
