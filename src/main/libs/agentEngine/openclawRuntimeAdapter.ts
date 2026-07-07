@@ -2569,6 +2569,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       pendingVisibleFinalContinuation?: boolean;
     },
   ): void {
+    if (this.activeTurns.get(sessionId) !== turn || turn.stopRequested) {
+      console.debug(
+        '[OpenClawRuntime] skipped recoverable follow-up wait for stale turn.',
+        `sessionId=${sessionId}`,
+        `runId=${runId}`,
+        `reason=${options.reason}`,
+      );
+      return;
+    }
+
     turn.pendingRecoverableFollowup = true;
     turn.pendingOpenClawRetry = true;
     turn.lastRecoverableFinalAtMs = Date.now();

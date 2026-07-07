@@ -153,6 +153,7 @@ interface CoworkConfig {
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
   skipMissedJobs: boolean;
+  openClawHeartbeatEnabled: boolean;
   embeddingEnabled: boolean;
   embeddingProvider: string;
   embeddingModel: string;
@@ -175,6 +176,7 @@ type CoworkConfigUpdate = Partial<
     | 'memoryGuardLevel'
     | 'memoryUserMemoriesMaxItems'
     | 'skipMissedJobs'
+    | 'openClawHeartbeatEnabled'
     | 'embeddingEnabled'
     | 'embeddingProvider'
     | 'embeddingModel'
@@ -188,6 +190,7 @@ type CoworkConfigUpdate = Partial<
 interface CoworkUserMemoryEntry {
   id: string;
   text: string;
+  section?: string;
 }
 
 interface CoworkMemoryStats {
@@ -918,6 +921,10 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
     deleteMemoryEntry: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
     getMemoryStats: () => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    readMemoryFileRaw: () => Promise<{ success: boolean; content?: string; error?: string }>;
+    writeMemoryFileRaw: (input: {
+      content: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     readBootstrapFile: (
       filename: string,
     ) => Promise<{ success: boolean; content: string; error?: string }>;

@@ -19,6 +19,8 @@ export const CoworkIpcChannel = {
   SubmitSteer: 'cowork:session:submitSteer',
   SessionModelOverrideChanged: 'cowork:session:modelOverrideChanged',
   StreamGoal: 'cowork:stream:goal',
+  MemoryReadRaw: 'cowork:memory:readRaw',
+  MemoryWriteRaw: 'cowork:memory:writeRaw',
 } as const;
 export type CoworkIpcChannel = typeof CoworkIpcChannel[keyof typeof CoworkIpcChannel];
 
