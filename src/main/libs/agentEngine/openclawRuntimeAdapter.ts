@@ -3518,6 +3518,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         status,
         createdAt: params.createdAt,
       });
+      console.log(
+        '[OpenClawRuntime] materialized subagent child session:',
+        `runId=${params.runId}`,
+        `childSessionId=${session.id}`,
+        `parentSessionId=${params.parentSessionId}`,
+        `childSessionKey=${params.childSessionKey}`,
+        `agentId=${params.agentId}`,
+        `runStatus=${params.status}`,
+        `sessionStatus=${status}`,
+      );
       this.rememberSessionKey(session.id, params.childSessionKey);
       this.fullySyncedSessions.delete(session.id);
       for (const win of BrowserWindow.getAllWindows()) {
@@ -3556,9 +3566,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     status: 'done' | 'error',
   ): void {
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.log(
+        '[OpenClawRuntime] passive subagent finalize skipped: no session mapping',
+        `sessionKey=${sessionKey}`,
+        `status=${status}`,
+      );
+      return;
+    }
 
     const nextStatus: CoworkSessionStatus = status === 'done' ? 'completed' : 'error';
+    const previousStatus = this.store.getSession(sessionId, 0)?.status ?? 'unknown';
+    console.log(
+      '[OpenClawRuntime] passive subagent finalize:',
+      `sessionId=${sessionId}`,
+      `sessionKey=${sessionKey}`,
+      `status=${status}`,
+      `previousSessionStatus=${previousStatus}`,
+      `nextSessionStatus=${nextStatus}`,
+    );
     this.store.updateSession(sessionId, { status: nextStatus });
     this.emitSessionStatus(sessionId, nextStatus);
     if (nextStatus === 'completed') {
@@ -6262,6 +6288,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (stream === 'lifecycle'
+      && (lifecyclePhase === AgentLifecyclePhase.End || lifecyclePhase === AgentLifecyclePhase.Error)) {
+      const sessionIdByRunIdForLog = runId ? this.sessionIdByRunId.get(runId) : undefined;
+      const sessionIdBySessionKeyForLog = sessionKey ? this.resolveSessionIdBySessionKey(sessionKey) ?? undefined : undefined;
+      console.log(
+        '[OpenClawRuntime] terminal agent lifecycle received:',
+        `phase=${lifecyclePhase}`,
+        `runId=${runId || 'unknown'}`,
+        `sessionKey=${sessionKey || 'unknown'}`,
+        `sessionIdByRunId=${sessionIdByRunIdForLog ?? 'none'}`,
+        `sessionIdBySessionKey=${sessionIdBySessionKeyForLog ?? 'none'}`,
+        `activeByRunId=${sessionIdByRunIdForLog ? this.activeTurns.has(sessionIdByRunIdForLog) : false}`,
+        `activeBySessionKey=${sessionIdBySessionKeyForLog ? this.activeTurns.has(sessionIdBySessionKeyForLog) : false}`,
+        `isSubagentSessionKey=${isSubagentSessionKey(sessionKey)}`,
+      );
+    }
+
+    if (stream === 'lifecycle'
       && (lifecyclePhase === AgentLifecyclePhase.End || lifecyclePhase === AgentLifecyclePhase.Error)
       && sessionKey
       && this.subagentTracker.tryMarkTerminalFromSessionKey(
@@ -7378,6 +7421,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const sessionKey = typeof chatPayload.sessionKey === 'string' ? chatPayload.sessionKey.trim() : '';
     const sessionId = this.resolveSessionIdFromChatPayload(chatPayload);
+    if (state === 'final' || state === 'aborted' || state === 'error') {
+      console.log(
+        '[OpenClawRuntime] terminal chat received:',
+        `state=${state}`,
+        `runId=${runId || 'unknown'}`,
+        `sessionKey=${sessionKey || 'unknown'}`,
+        `sessionId=${sessionId ?? 'none'}`,
+        `active=${sessionId ? this.activeTurns.has(sessionId) : false}`,
+        `isSubagentSessionKey=${isSubagentSessionKey(sessionKey)}`,
+        `message=${summarizeGatewayMessageShape(chatPayload.message)}`,
+      );
+    }
     if (!sessionId) {
       if ((state === 'final' || state === 'aborted' || state === 'error')
         && sessionKey

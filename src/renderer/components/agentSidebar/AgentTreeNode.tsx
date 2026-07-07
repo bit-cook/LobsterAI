@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
-import type { SubagentSessionSummary } from '../../types/cowork';
 import { getAgentDisplayName, isDefaultAgentId, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import AgentConfirmDialog from '../agent/AgentConfirmDialog';
@@ -15,7 +14,6 @@ import TrashIcon from '../icons/TrashIcon';
 import AgentTaskRow from './AgentTaskRow';
 import { createSessionBatchKey } from './batchSelection';
 import ExpandAgentTasksRow from './ExpandAgentTasksRow';
-import SubagentTaskRow from './SubagentTaskRow';
 import type { AgentSidebarAgentNode, AgentSidebarTaskNode } from './types';
 
 interface AgentTreeNodeProps {
@@ -33,9 +31,7 @@ interface AgentTreeNodeProps {
   onLoadMoreTasks: (agentId: string) => void;
   onCollapseTasks: (agentId: string) => void;
   onSelectTask: (task: AgentSidebarTaskNode) => void;
-  onSelectSubagent: (subagent: SubagentSessionSummary) => void;
   onDeleteTask: (task: AgentSidebarTaskNode) => Promise<void>;
-  onDeleteSubagent: (subagent: SubagentSessionSummary) => Promise<void>;
   onShareTask: (task: AgentSidebarTaskNode) => Promise<void>;
   onToggleTaskPin: (task: AgentSidebarTaskNode, pinned: boolean) => Promise<void>;
   onRenameTask: (task: AgentSidebarTaskNode, title: string) => Promise<void>;
@@ -98,9 +94,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   onLoadMoreTasks,
   onCollapseTasks,
   onSelectTask,
-  onSelectSubagent,
   onDeleteTask,
-  onDeleteSubagent,
   onShareTask,
   onToggleTaskPin,
   onRenameTask,
@@ -122,7 +116,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   const isBatchAgent = isBatchMode && batchAgentId === agent.id;
   const isOutsideBatchAgent = isBatchMode && batchAgentId !== null && batchAgentId !== agent.id;
   const agentName = getAgentDisplayName(agent);
-  const hasVisibleTasks = agent.tasks.length > 0 || agent.subagentTasks.length > 0;
+  const hasVisibleTasks = agent.tasks.length > 0;
   const visibleItems = [
     ...agent.tasks.map((task) => ({
       kind: 'session' as const,
@@ -130,13 +124,6 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
       timestamp: task.updatedAt || task.createdAt,
       pinned: task.pinned,
       task,
-    })),
-    ...agent.subagentTasks.map((subagent) => ({
-      kind: 'subagent' as const,
-      id: `subagent:${subagent.id}`,
-      timestamp: subagent.parentUpdatedAt ?? subagent.endedAt ?? subagent.createdAt,
-      pinned: false,
-      subagent,
     })),
   ].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -468,37 +455,23 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
               )}
 
               {visibleItems.map((item) => (
-                item.kind === 'session' ? (
-                  <AgentTaskRow
-                    key={item.id}
-                    task={item.task}
-                    isBatchMode={isBatchAgent}
-                    isSelected={selectedKeys.has(createSessionBatchKey(item.task.id))}
-                    isSelectionDisabled={isOutsideBatchAgent}
-                    showBatchOption={showBatchOption && !isBatchMode}
-                    onSelect={() => onSelectTask(item.task)}
-                    onDelete={() => onDeleteTask(item.task)}
-                    onShare={() => onShareTask(item.task)}
-                    onTogglePin={(pinned) => onToggleTaskPin(item.task, pinned)}
-                    onRename={(title) => onRenameTask(item.task, title)}
-                    onToggleSelection={() => onToggleSelection(createSessionBatchKey(item.task.id), item.task.agentId)}
-                    onEnterBatchMode={() => onEnterBatchMode(item.task)}
-                    onSidebarAction={onSidebarAction}
-                    analyticsParams={getTaskActionParams?.(item.task)}
-                  />
-                ) : (
-                  <SubagentTaskRow
-                    key={item.id}
-                    subagent={item.subagent}
-                    onSelect={() => onSelectSubagent(item.subagent)}
-                    onDelete={() => onDeleteSubagent(item.subagent)}
-                    onSidebarAction={onSidebarAction}
-                    analyticsParams={{
-                      isCurrentSubagent: false,
-                      subagentStatus: item.subagent.status,
-                    }}
-                  />
-                )
+                <AgentTaskRow
+                  key={item.id}
+                  task={item.task}
+                  isBatchMode={isBatchAgent}
+                  isSelected={selectedKeys.has(createSessionBatchKey(item.task.id))}
+                  isSelectionDisabled={isOutsideBatchAgent}
+                  showBatchOption={showBatchOption && !isBatchMode}
+                  onSelect={() => onSelectTask(item.task)}
+                  onDelete={() => onDeleteTask(item.task)}
+                  onShare={() => onShareTask(item.task)}
+                  onTogglePin={(pinned) => onToggleTaskPin(item.task, pinned)}
+                  onRename={(title) => onRenameTask(item.task, title)}
+                  onToggleSelection={() => onToggleSelection(createSessionBatchKey(item.task.id), item.task.agentId)}
+                  onEnterBatchMode={() => onEnterBatchMode(item.task)}
+                  onSidebarAction={onSidebarAction}
+                  analyticsParams={getTaskActionParams?.(item.task)}
+                />
               ))}
 
               {agent.hasLoadError && hasVisibleTasks && (

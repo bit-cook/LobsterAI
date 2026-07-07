@@ -8,7 +8,7 @@ import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import { selectCurrentSessionId } from '../../store/selectors/coworkSelectors';
 import { setDraftCollaborationMode } from '../../store/slices/coworkSlice';
-import { CoworkCollaborationMode, type SubagentSessionSummary } from '../../types/cowork';
+import { CoworkCollaborationMode } from '../../types/cowork';
 import { isDefaultAgentId } from '../../utils/agentDisplay';
 import AgentCreateModal from '../agent/AgentCreateModal';
 import AgentSettingsPanel from '../agent/AgentSettingsPanel';
@@ -83,7 +83,6 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     removeTaskPreview,
     removeTaskPreviews,
     removeAgentTaskPreviews,
-    removeSubagentPreview,
     retryLoadTasks,
     loadMoreTasks,
     expandAgent,
@@ -123,21 +122,6 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
     return coworkService.loadSession(task.id);
   }, [currentAgentId, currentSessionId, onShowCowork, onTaskSelected]);
-
-  const handleSelectSubagent = useCallback(async (subagent: SubagentSessionSummary) => {
-    const targetAgentId = subagent.agentId?.trim() || currentAgentId;
-    if (targetAgentId !== currentAgentId) {
-      agentService.switchAgent(targetAgentId);
-      await coworkService.loadSessions(targetAgentId);
-    }
-    onShowCowork();
-    if (subagent.childCoworkSessionId) {
-      await coworkService.loadSession(subagent.childCoworkSessionId);
-      return;
-    }
-    await coworkService.loadSession(subagent.parentSessionId);
-    window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: subagent }));
-  }, [currentAgentId, onShowCowork]);
 
   useEffect(() => {
     const handleSwitchAgent = (event: Event) => {
@@ -217,20 +201,6 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     });
     if (deleted) {
       removeTaskPreview(task.id);
-    }
-  };
-
-  const handleDeleteSubagent = async (subagent: SubagentSessionSummary) => {
-    const deleted = subagent.childCoworkSessionId
-      ? await coworkService.deleteSession(subagent.childCoworkSessionId)
-      : await coworkService.deleteSubagentSession(subagent.parentSessionId, subagent.id);
-    onSidebarAction?.(deleted ? 'subagent_delete_success' : 'subagent_delete_failed', {
-      agentType: getAgentType(subagent.agentId ?? AgentId.Main),
-      result: deleted ? 'success' : 'failed',
-      subagentStatus: subagent.status,
-    });
-    if (deleted) {
-      removeSubagentPreview(subagent.agentId ?? AgentId.Main, subagent.id);
     }
   };
 
@@ -378,9 +348,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
         collapseTasks(agentId);
       }}
       onSelectTask={(task) => void handleSelectTask(task)}
-      onSelectSubagent={(subagent) => void handleSelectSubagent(subagent)}
       onDeleteTask={handleDeleteTask}
-      onDeleteSubagent={handleDeleteSubagent}
       onShareTask={handleShareTask}
       onToggleTaskPin={handleToggleTaskPin}
       onRenameTask={handleRenameTask}

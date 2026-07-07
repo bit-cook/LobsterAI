@@ -217,6 +217,7 @@ export class SubagentTracker {
     if (!toolCallIds) return;
     for (const tcId of toolCallIds) {
       if (this.subagentStatus.get(tcId) === 'running') {
+        this.logTerminalState('resume/read', tcId, 'done');
         this.subagentStatus.set(tcId, 'done');
         this.store.updateSubagentRunStatus(tcId, 'done', Date.now());
         // Persist cached messages now that completion is confirmed
@@ -237,6 +238,7 @@ export class SubagentTracker {
     for (const [toolCallId, sessionKey] of this.subagentSessionKeys) {
       if (sessionKey.includes(subagentUuid)) {
         if (this.subagentStatus.get(toolCallId) !== 'done') {
+          this.logTerminalState('announce', toolCallId, 'done');
           this.subagentStatus.set(toolCallId, 'done');
           this.store.updateSubagentRunStatus(toolCallId, 'done', Date.now());
           console.log('[SubagentTracker] marked subagent as done via announce:', toolCallId);
@@ -267,6 +269,7 @@ export class SubagentTracker {
         return true;
       }
       if (currentStatus !== status) {
+        this.logTerminalState('session-key', toolCallId, status);
         this.subagentStatus.set(toolCallId, status);
         this.store.updateSubagentRunStatus(toolCallId, status, Date.now());
         console.log('[SubagentTracker] marked subagent as terminal via session key:', toolCallId, status);
@@ -431,52 +434,30 @@ export class SubagentTracker {
     runId: string,
     sessionKey?: string,
   ): Promise<SubagentCoworkMessage[]> {
+    const storedRun = this.store?.getSubagentRun(runId) ?? null;
+    const storedRunBelongsToParent = storedRun?.parentSessionId === parentSessionId;
+    const persistedSessionKey = storedRunBelongsToParent ? storedRun?.sessionKey : null;
+    const resolvedStatus = this.subagentStatus.get(runId) ?? storedRun?.status;
+    const key = sessionKey || this.subagentSessionKeys.get(runId) || persistedSessionKey || '';
+
+    if (!key) {
+      console.log('[SubagentTracker] getSubTaskHistory: no session key for runId:', runId, 'parentSession:', parentSessionId, 'status:', resolvedStatus ?? 'unknown');
+      return [];
+    }
+
+    if (sessionKey && !this.subagentSessionKeys.has(runId)) {
+      this.subagentSessionKeys.set(runId, sessionKey);
+    }
+
     // 1. Try locally collected messages (only serve cache if subagent is done/error)
-    const status = this.subagentStatus.get(runId);
     const local = this.subagentMessages.get(runId);
-    if (local && local.length > 0 && (status === 'done' || status === 'error')) {
+    if (local && local.length > 0 && (resolvedStatus === 'done' || resolvedStatus === 'error')) {
       return local;
     }
 
     // 2. Try persisted messages from local database
     const persisted = this.loadPersistedMessages(runId);
     if (persisted) return persisted;
-
-    // 3. Resolve session key from multiple sources
-    let key = sessionKey || this.subagentSessionKeys.get(runId);
-
-    // Cache externally-provided session key in memory for later lookups
-    if (sessionKey && !this.subagentSessionKeys.has(runId)) {
-      this.subagentSessionKeys.set(runId, sessionKey);
-    }
-
-    // 3b. Try reading from persistent store if not in memory
-    if (!key) {
-      const runs = this.store.listSubagentRuns(parentSessionId);
-      const matchingRun = runs.find((r) => r.id === runId || r.agentId === runId);
-      if (matchingRun?.sessionKey) {
-        key = matchingRun.sessionKey;
-        this.subagentSessionKeys.set(runId, key);
-      }
-      // 3c. If runId didn't match directly, check if it's a UUID that appears in any session key
-      if (!key) {
-        const runWithKeyMatch = runs.find((r) =>
-          r.sessionKey && r.sessionKey.includes(runId),
-        );
-        if (runWithKeyMatch?.sessionKey) {
-          key = runWithKeyMatch.sessionKey;
-          this.subagentSessionKeys.set(runId, key);
-        }
-      }
-    }
-
-    if (!key) {
-      console.log('[SubagentTracker] getSubTaskHistory: no session key resolved for runId:', runId, 'parentSession:', parentSessionId);
-      const discovered = await this.discoverSubagentSessionKey(runId);
-      if (!discovered) return [];
-      this.subagentSessionKeys.set(runId, discovered);
-      key = discovered;
-    }
 
     console.log('[SubagentTracker] getSubTaskHistory: fetching history for runId:', runId, 'key:', key);
     return this.fetchSubagentHistory(key, runId);
@@ -614,10 +595,36 @@ export class SubagentTracker {
 
   private materializeChildSession(params: SubagentChildSessionMaterializeParams): void {
     try {
+      console.log(
+        '[SubagentTracker] materialize child session:',
+        `runId=${params.runId}`,
+        `agentId=${params.agentId}`,
+        `childCoworkSessionId=${params.childCoworkSessionId}`,
+        `childSessionKey=${params.childSessionKey}`,
+        `status=${params.status}`,
+      );
       this.onChildSessionMaterialized?.(params);
     } catch (error) {
       console.warn('[SubagentTracker] failed to materialize child session:', error);
     }
+  }
+
+  private logTerminalState(
+    reason: string,
+    runId: string,
+    status: 'done' | 'error',
+  ): void {
+    const run = this.store?.getSubagentRun(runId) ?? null;
+    console.log(
+      '[SubagentTracker] terminal state:',
+      `reason=${reason}`,
+      `runId=${runId}`,
+      `status=${status}`,
+      `memoryStatus=${this.subagentStatus.get(runId) ?? 'none'}`,
+      `dbStatus=${run?.status ?? 'none'}`,
+      `childCoworkSessionId=${run?.childCoworkSessionId ?? 'none'}`,
+      `sessionKey=${this.subagentSessionKeys.get(runId) ?? run?.sessionKey ?? 'none'}`,
+    );
   }
 
   private resolveSpawnAgentId(
@@ -745,30 +752,6 @@ export class SubagentTracker {
       console.warn('[SubagentTracker] Failed to delete gateway subagent session:', error);
       return false;
     }
-  }
-
-  private async discoverSubagentSessionKey(runId: string): Promise<string | null> {
-    const client = this.getGatewayClient();
-    if (!client) return null;
-    // Also try the agentId for discovery (the run may have been registered with a meaningful agentId)
-    const agentId = this.subagentToolCallIdToAgentId.get(runId) || runId;
-    try {
-      const result = await client.request<{ sessions?: unknown[] }>('sessions.list', {
-        activeMinutes: 120,
-      }, { timeoutMs: 5_000 });
-      const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
-      for (const session of sessions) {
-        if (!isRecord(session)) continue;
-        const key = typeof session.key === 'string' ? session.key : '';
-        if (key.includes(`:${agentId}:`) || key.includes(`:${agentId}`)
-            || key.includes(`subagent:${agentId}`)) {
-          return key;
-        }
-      }
-    } catch (error) {
-      console.warn('[SubagentTracker] Failed to discover subagent session key:', error);
-    }
-    return null;
   }
 
   private async fetchSubagentHistory(
@@ -959,6 +942,7 @@ export class SubagentTracker {
    */
   private loadPersistedMessages(runId: string): SubagentCoworkMessage[] | null {
     if (!this.messageStore) return null;
+    if (!this.store) return null;
     if (!this.store.isMessagesPersisted(runId)) return null;
 
     const rows = this.messageStore.getMessages(runId);

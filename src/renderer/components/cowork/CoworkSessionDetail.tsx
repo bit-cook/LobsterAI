@@ -1694,6 +1694,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         task: run.task,
         label: run.label,
         sessionKey: run.sessionKey,
+        childCoworkSessionId: run.childCoworkSessionId,
         parentSessionId: targetSessionId,
         status: run.status,
         createdAt: run.createdAt,
@@ -2117,10 +2118,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   ]);
 
   const handleSelectSubagent = useCallback((subagent: SubagentSessionSummary) => {
-    if (subagent.childCoworkSessionId) {
-      void coworkService.loadSession(subagent.childCoworkSessionId);
-      return;
-    }
     if (!sessionId) return;
     setSelectedSubagent(subagent);
     setSessionSubagentPreviewTabOpen(true);
@@ -2141,10 +2138,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
       if (!detail) {
         setSelectedSubagent(null);
-        return;
-      }
-      if (detail.childCoworkSessionId) {
-        void coworkService.loadSession(detail.childCoworkSessionId);
         return;
       }
       if (!sessionId || detail.parentSessionId !== sessionId) return;

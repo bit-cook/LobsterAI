@@ -242,6 +242,40 @@ test('getSubTaskHistory preserves persisted message timestamps', async () => {
   expect(gatewayClient.request).not.toHaveBeenCalled();
 });
 
+test('getSubTaskHistory ignores persisted messages when failed run has no session key', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const gatewayClient: GatewayClientLike = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [{ key: 'agent:worker:subagent:wrong-run' }],
+    }),
+  };
+  const tracker = new SubagentTracker(runStore, messageStore, () => gatewayClient);
+  runStore.insertSubagentRun({
+    id: 'run-error',
+    parentSessionId: 'parent-1',
+    sessionKey: null,
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'worker',
+    status: 'error',
+    createdAt: 1000,
+    endedAt: 1001,
+  });
+  messageStore.insertMessages('run-error', [{
+    id: 'message-1',
+    type: 'assistant',
+    content: 'wrong history',
+    timestamp: 1002,
+    sequence: 1,
+  }]);
+  runStore.markMessagesPersisted('run-error');
+
+  const messages = await tracker.getSubTaskHistory('parent-1', 'run-error');
+
+  expect(messages).toEqual([]);
+  expect(gatewayClient.request).not.toHaveBeenCalled();
+});
+
 test('deleted subagent run is not reinserted by late spawn results', async () => {
   const tracker = new SubagentTracker(runStore, messageStore, () => null);
   tracker.onToolStart('run-1', {

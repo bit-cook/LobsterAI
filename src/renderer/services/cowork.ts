@@ -63,7 +63,6 @@ import type {
   OpenClawEngineStatus,
   OpenClawGatewayRepairResult,
   OpenClawSessionPolicyConfig,
-  SubagentSessionSummary,
 } from '../types/cowork';
 import { i18nService } from './i18n';
 
@@ -644,20 +643,6 @@ class CoworkService {
     offset: number,
   ): Promise<CoworkSessionListResult> {
     const result = await window.electron?.cowork?.listSessions({ limit, offset, agentId });
-    return result ?? { success: false, error: 'Cowork IPC is unavailable' };
-  }
-
-  async listSubagentSessionsForAgentPreview(
-    agentId: string,
-    limit: number,
-    offset: number,
-  ): Promise<{
-    success: boolean;
-    runs?: SubagentSessionSummary[];
-    hasMore?: boolean;
-    error?: string;
-  }> {
-    const result = await window.electron?.cowork?.listSubagentSessionsByAgent?.({ agentId, limit, offset });
     return result ?? { success: false, error: 'Cowork IPC is unavailable' };
   }
 
