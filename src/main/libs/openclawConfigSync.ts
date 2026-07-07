@@ -1861,6 +1861,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             target: 'none',
             lightContext: true,
             isolatedSession: true,
+            skipWhenBusy: true,
           },
           ...(Object.keys(agentModelDefaults).length > 0
             ? { models: agentModelDefaults }
