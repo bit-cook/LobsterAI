@@ -82,6 +82,8 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
   const currentBannerIndex = banners.length > 0 ? currentIndex % banners.length : 0;
   const banner = banners.length > 0 ? banners[currentBannerIndex] : null;
   const hasMultipleBanners = banners.length > 1;
+  const visibleIndicatorCount = Math.min(banners.length, 3);
+  const activeIndicatorIndex = Math.min(currentBannerIndex, visibleIndicatorCount - 1);
   const isVisible = Boolean(banner && storageKey && hiddenKey !== undefined && hiddenKey !== storageKey);
 
   useEffect(() => {
@@ -121,10 +123,9 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
             void openBanner();
           }
         }}
-        className="pointer-events-auto group relative block w-full overflow-visible rounded-lg bg-transparent transition-opacity hover:opacity-95"
+        className="pointer-events-auto group relative block w-full overflow-visible rounded-lg bg-transparent drop-shadow-[0_4px_4px_rgba(227,227,228,0.5)] transition-opacity hover:opacity-95 dark:drop-shadow-none"
         style={{
           aspectRatio: imageAspectRatio,
-          filter: 'drop-shadow(0 4px 4px rgba(227, 227, 228, 0.5))',
         }}
         aria-label={banner.activityDescription}
       >
@@ -139,11 +140,11 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
             aria-hidden="true"
             className="absolute left-3 top-3 z-20 flex w-2 flex-col items-center gap-1"
           >
-            {banners.map((item, index) => (
+            {Array.from({ length: visibleIndicatorCount }, (_, index) => (
               <span
-                key={item.id}
-                className={`h-1.5 w-1.5 rounded-full border border-[#9B9BA1] ${
-                  index === currentBannerIndex ? 'bg-[#9B9BA1]' : 'bg-transparent'
+                key={index}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  index === activeIndicatorIndex ? 'bg-[#656877]' : 'bg-[#D9D9D9]'
                 }`}
               />
             ))}
