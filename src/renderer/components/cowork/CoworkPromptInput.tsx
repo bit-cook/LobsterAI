@@ -1,4 +1,5 @@
 import {
+  ArrowTurnDownRightIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -24,6 +25,10 @@ import {
 } from '../../../shared/cowork/imageAttachments';
 import { isPlanImplementationApproval } from '../../../shared/cowork/planMode';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
+import {
+  type CoworkPendingSteer,
+  CoworkSteerStatus,
+} from '../../../shared/cowork/steer';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
@@ -46,11 +51,15 @@ import {
 } from '../../store/slices/asrQuotaSlice';
 import {
   addDraftAttachment,
+  addPendingSteer,
   clearDraftAttachments,
   clearDraftSelectedTextSnippets,
+  COWORK_STEER_QUEUE_LIMIT,
   type DraftAttachment,
   PlanConfirmationState,
   removeDraftSelectedTextSnippet,
+  removePendingSteer,
+  removeRejectedSteer,
   setDraftAttachments,
   setDraftCollaborationMode,
   setDraftKitIds,
@@ -58,6 +67,7 @@ import {
   setDraftSelectedTextSnippets,
   setDraftSkillIds,
   setPlanConfirmationHandled,
+  setSteerDraft,
   updateCurrentSessionModelOverride,
   updateSessionGoal,
 } from '../../store/slices/coworkSlice';
@@ -354,7 +364,7 @@ interface CoworkPromptInputProps {
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     collaborationMode?: CoworkCollaborationMode,
   ) => boolean | void | Promise<boolean | void>;
-  onStop?: () => void;
+  onStop?: () => void | Promise<void>;
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -373,12 +383,14 @@ interface CoworkPromptInputProps {
   contextUsageControl?: React.ReactNode;
   goal?: CoworkGoal | null;
   onGoalCommand?: (command: string) => boolean | void | Promise<boolean | void>;
+  canSteer?: boolean;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
 
 const EMPTY_ATTACHMENTS: CoworkAttachment[] = [];
 const EMPTY_SELECTED_TEXT_SNIPPETS: CoworkSelectedTextSnippet[] = [];
+const EMPTY_STEERS: CoworkPendingSteer[] = [];
 
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
@@ -403,11 +415,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       contextUsageControl,
       goal,
       onGoalCommand,
+      canSteer = false,
       remoteManaged = false,
     } = props;
     const dispatch = useDispatch();
     const draftKey = sessionId || '__home__';
     const draftPrompt = useSelector((state: RootState) => selectDraftPrompts(state)[draftKey] || '');
+    const steerDraft = useSelector((state: RootState) => (
+      sessionId ? state.cowork.steerDrafts[sessionId] || '' : ''
+    ));
+    const pendingSteers = useSelector((state: RootState) => (
+      sessionId ? state.cowork.pendingSteers[sessionId] || EMPTY_STEERS : EMPTY_STEERS
+    ));
+    const rejectedSteers = useSelector((state: RootState) => (
+      sessionId ? state.cowork.rejectedSteers[sessionId] || EMPTY_STEERS : EMPTY_STEERS
+    ));
     const attachments = useSelector((state: RootState) => state.cowork.draftAttachments[draftKey] || EMPTY_ATTACHMENTS) as CoworkAttachment[];
     const selectedTextSnippets = useSelector((state: RootState) => state.cowork.draftSelectedTextSnippets[draftKey] || EMPTY_SELECTED_TEXT_SNIPPETS);
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
@@ -419,6 +441,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const authQuota = useSelector((state: RootState) => state.auth.quota);
     const asrQuota = useSelector((state: RootState) => state.asrQuota);
     const [value, setValue] = useState(draftPrompt);
+    const [steerValue, setSteerValue] = useState(steerDraft);
+    const [steerInputActive, setSteerInputActive] = useState(false);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -462,6 +486,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalInputReturnDraftRef = useRef<string | null>(null);
     const draftStartedAnalyticsRef = useRef(false);
     const inputSourceOverrideRef = useRef<'template' | null>(null);
+    const wasStreamingRef = useRef(isStreaming);
+    const autoSubmittingQueuedSteerRef = useRef<string | null>(null);
+    const interruptingQueuedSteerIdRef = useRef<string | null>(null);
+    const suppressQueuedSteerAfterStopRef = useRef(false);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
@@ -585,7 +613,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large' || isCompact;
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext || isCompact);
-  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode || goalInputActive;
+  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode || goalInputActive || steerInputActive;
   const hasAttachments = attachments.length > 0;
   const minHeight = isCompact
     ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
@@ -968,6 +996,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   // Sync value from draft when sessionId changes
   useEffect(() => {
     setValue(draftPrompt);
+    setSteerValue(steerDraft);
+    setSteerInputActive(false);
     // Re-derive imageVisionHint from the new session's draft attachments
     const hasImageWithoutVision = !modelSupportsImage && attachments.some(a => a.isImage || isImagePath(a.path));
     setImageVisionHint(hasImageWithoutVision);
@@ -984,10 +1014,84 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [value, draftPrompt, dispatch, draftKey]);
 
   useEffect(() => {
-    if (!value) {
+    if (!sessionId || steerValue === steerDraft) return undefined;
+    const timer = setTimeout(() => {
+      dispatch(setSteerDraft({ sessionId, draft: steerValue }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [dispatch, sessionId, steerDraft, steerValue]);
+
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+    if (isStreaming || !wasStreaming || !sessionId || remoteManaged || disabled) {
+      return;
+    }
+
+    if (suppressQueuedSteerAfterStopRef.current) {
+      suppressQueuedSteerAfterStopRef.current = false;
+      interruptingQueuedSteerIdRef.current = null;
+      console.debug(
+        `[CoworkSteer] skipped queued follow-up after manual stop for session ${sessionId}; `
+        + `queued=${pendingSteers.length}.`,
+      );
+      return;
+    }
+
+    const interruptingQueuedSteerId = interruptingQueuedSteerIdRef.current;
+    const nextQueuedSteer = interruptingQueuedSteerId
+      ? pendingSteers.find(steer => steer.id === interruptingQueuedSteerId) ?? pendingSteers[0]
+      : pendingSteers[0];
+    if (!nextQueuedSteer) {
+      interruptingQueuedSteerIdRef.current = null;
+      return;
+    }
+    if (autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
+      return;
+    }
+
+    autoSubmittingQueuedSteerRef.current = nextQueuedSteer.id;
+    interruptingQueuedSteerIdRef.current = null;
+    console.debug(
+      `[CoworkSteer] active turn ${interruptingQueuedSteerId ? 'interrupted' : 'completed'}; `
+      + `submitting queued follow-up for session ${sessionId}; `
+      + `id=${nextQueuedSteer.id}; chars=${nextQueuedSteer.text.length}.`,
+    );
+    void Promise.resolve(onSubmit(
+      nextQueuedSteer.text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      CoworkCollaborationMode.Default,
+    ))
+      .then((result) => {
+        if (result === false) {
+          console.warn(
+            `[CoworkSteer] queued follow-up was rejected by normal continue flow for session ${sessionId}; `
+            + `id=${nextQueuedSteer.id}.`,
+          );
+          return;
+        }
+        dispatch(removePendingSteer({ sessionId, steerId: nextQueuedSteer.id }));
+      })
+      .catch((error) => {
+        console.error(
+          `[CoworkSteer] failed to submit queued follow-up for session ${sessionId}; `
+          + `id=${nextQueuedSteer.id}.`,
+          error,
+        );
+      })
+      .finally(() => {
+        autoSubmittingQueuedSteerRef.current = null;
+      });
+  }, [disabled, dispatch, isStreaming, onSubmit, pendingSteers, remoteManaged, sessionId]);
+
+  useEffect(() => {
+    if (!(steerInputActive ? steerValue : value)) {
       setTextareaScrollTop(0);
     }
-  }, [value]);
+  }, [steerInputActive, steerValue, value]);
 
   // Restore active kit/skill IDs from draft when draftKey changes
   useEffect(() => {
@@ -1006,10 +1110,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     dispatch(setDraftSkillIds({ draftKey, skillIds: activeSkillIds }));
   }, [activeSkillIds, draftKey, dispatch]);
 
+  const activeTextareaValue = steerInputActive ? steerValue : value;
   const mediaLabels = useMemo(() => computeMediaLabels(attachments), [attachments]);
   const mediaMentionSegments = useMemo(
-    () => buildMediaMentionSegments(value, mediaLabels),
-    [mediaLabels, value]
+    () => steerInputActive ? [] : buildMediaMentionSegments(value, mediaLabels),
+    [mediaLabels, steerInputActive, value]
   );
   const hasMediaMentionHighlight = mediaMentionSegments.some(
     segment => segment.kind === MediaMentionSegmentKind.Mention
@@ -1041,6 +1146,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
+    if (steerInputActive) {
+      setSteerValue(newValue);
+      setMentionPickerOpen(false);
+      return;
+    }
     setValue(newValue);
     if (!newValue.trim()) {
       inputSourceOverrideRef.current = null;
@@ -1067,14 +1177,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
     setMentionPickerOpen(false);
-  }, [mediaLabels, reportPromptControl]);
+  }, [mediaLabels, reportPromptControl, steerInputActive]);
 
   const handleTextareaFocus = useCallback(() => {
     reportPromptControl('input_focus', {
-      hasPrompt: value.trim().length > 0,
+      hasPrompt: activeTextareaValue.trim().length > 0,
       attachmentCount: attachments.length,
     });
-  }, [attachments.length, reportPromptControl, value]);
+  }, [activeTextareaValue, attachments.length, reportPromptControl]);
 
   const resetGoalInput = useCallback((restoreDraft: boolean) => {
     const restoredDraft = restoreDraft ? goalInputReturnDraftRef.current : null;
@@ -1091,6 +1201,132 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
     let effectiveSubmitMethod = submitMethod;
+    const shouldSubmitAsSteer = isStreaming
+      && !goalInputActive
+      && !!sessionId
+      && steerInputActive
+      && canSteer
+      && !remoteManaged;
+    if (shouldSubmitAsSteer) {
+      if (!sessionId) {
+        showToast(i18nService.t('coworkSteerNoActiveTurn'));
+        return;
+      }
+      const steerText = (steerInputActive ? steerValue : value).trim();
+      if (!steerText || disabled || isPatchingModel) {
+        reportPromptControl('submit_blocked', {
+          blockedReason: !steerText ? 'empty_steer' : disabled ? 'disabled' : 'model_patching',
+          submitMethod: effectiveSubmitMethod,
+          ...getPromptTextAnalyticsParams(steerText),
+        });
+        return;
+      }
+
+      const clientSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      console.debug(
+        `[CoworkSteer] submitting steer from prompt input for session ${sessionId}; `
+        + `id=${clientSteerId}; chars=${steerText.length}; `
+        + `mode=${steerInputActive ? 'explicit' : 'inline'}.`,
+      );
+      const accepted = await coworkService.submitSteer({
+        sessionId,
+        text: steerText,
+        clientSteerId,
+      });
+      if (!accepted) {
+        return;
+      }
+      if (steerInputActive) {
+        setSteerValue('');
+        dispatch(setSteerDraft({ sessionId, draft: '' }));
+        setSteerInputActive(false);
+      } else {
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      }
+      reportPromptSubmit({
+        ...getPromptContextAnalyticsParams(),
+        submitMethod: effectiveSubmitMethod,
+        promptLength: steerText.length,
+        promptLineCount: steerText.length > 0 ? steerText.split('\n').length : 0,
+        hasPrompt: true,
+        params: {
+          inputSource: 'steer',
+          mediaReferenceCount: 0,
+          selectedTextSnippetCount: 0,
+          effectiveCollaborationMode: CoworkCollaborationMode.Default,
+        },
+      });
+      return;
+    }
+
+    const shouldQueueFollowUp = isStreaming
+      && !goalInputActive
+      && !steerInputActive
+      && !!sessionId
+      && !remoteManaged;
+    if (shouldQueueFollowUp) {
+      const followUpText = value.trim();
+      if (!followUpText || disabled || isPatchingModel) {
+        reportPromptControl('submit_blocked', {
+          blockedReason: !followUpText ? 'empty_follow_up' : disabled ? 'disabled' : 'model_patching',
+          submitMethod: effectiveSubmitMethod,
+          ...getPromptTextAnalyticsParams(followUpText),
+        });
+        return;
+      }
+      if (pendingSteers.length >= COWORK_STEER_QUEUE_LIMIT) {
+        console.warn(
+          `[CoworkSteer] queued follow-up rejected because queue is full for session ${sessionId}; `
+          + `limit=${COWORK_STEER_QUEUE_LIMIT}.`,
+        );
+        reportPromptControl('submit_blocked', {
+          blockedReason: 'follow_up_queue_full',
+          submitMethod: effectiveSubmitMethod,
+          queuedFollowUpCount: pendingSteers.length,
+          ...getPromptTextAnalyticsParams(followUpText),
+        });
+        showToast(i18nService.t('coworkSteerQueueFull'));
+        return;
+      }
+
+      const queuedSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const now = Date.now();
+      console.debug(
+        `[CoworkSteer] queued follow-up input for active session ${sessionId}; `
+        + `id=${queuedSteerId}; chars=${followUpText.length}.`,
+      );
+      dispatch(addPendingSteer({
+        id: queuedSteerId,
+        sessionId,
+        text: followUpText,
+        status: CoworkSteerStatus.Pending,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      setValue('');
+      dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      dispatch(clearDraftAttachments(draftKey));
+      dispatch(clearDraftSelectedTextSnippets(draftKey));
+      setImageVisionHint(false);
+      draftStartedAnalyticsRef.current = false;
+      inputSourceOverrideRef.current = null;
+      reportPromptSubmit({
+        ...getPromptContextAnalyticsParams(),
+        submitMethod: effectiveSubmitMethod,
+        promptLength: followUpText.length,
+        promptLineCount: followUpText.length > 0 ? followUpText.split('\n').length : 0,
+        hasPrompt: true,
+        params: {
+          inputSource: 'queued_follow_up',
+          mediaReferenceCount: 0,
+          selectedTextSnippetCount: selectedTextSnippets.length,
+          effectiveCollaborationMode: CoworkCollaborationMode.Default,
+        },
+      });
+      return;
+    }
+
     if (showFolderSelector && !workingDirectory?.trim()) {
       reportPromptControl('submit_blocked', {
         blockedReason: 'working_directory_required',
@@ -1142,7 +1378,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
     const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
-    if (isStreaming && !goalCommandCanRunWhileStreaming) {
+    const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+    if (isStreaming && !goalCommandCanRunWhileStreaming && !followUpCanQueueWhileStreaming) {
       reportPromptControl('submit_blocked', {
         blockedReason: 'streaming',
         submitMethod: effectiveSubmitMethod,
@@ -1444,7 +1681,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
+  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -1580,7 +1817,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
 
     const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
-    if (isSendCombo && isStreaming && !goalCommandCanRunWhileStreaming) {
+    const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+    if (isSendCombo && isStreaming && !goalCommandCanRunWhileStreaming && !followUpCanQueueWhileStreaming) {
       event.preventDefault();
       window.dispatchEvent(new CustomEvent('app:showToast', {
         detail: i18nService.t('coworkSessionStillRunning'),
@@ -1603,9 +1841,52 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ...getPromptCapabilityAnalyticsParams(),
     });
     if (onStop) {
-      onStop();
+      if (pendingSteers.length > 0) {
+        suppressQueuedSteerAfterStopRef.current = true;
+        interruptingQueuedSteerIdRef.current = null;
+      }
+      void Promise.resolve(onStop()).catch((error) => {
+        suppressQueuedSteerAfterStopRef.current = false;
+        console.error('[CoworkSteer] failed to stop active turn from prompt stop button.', error);
+      });
     }
   };
+
+  const handleToggleSteerInput = useCallback(() => {
+    if (!sessionId || disabled || voiceInputLocksEditing) return;
+    const nextActive = !steerInputActive;
+    if (nextActive) {
+      if (goalInputActive) {
+        resetGoalInput(true);
+      }
+      setShowAddMenu(false);
+      setShowSkillsPopover(false);
+      const nextSteerValue = steerDraft || value;
+      setSteerValue(nextSteerValue);
+      if (!steerDraft && value) {
+        dispatch(setSteerDraft({ sessionId, draft: nextSteerValue }));
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      }
+      dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
+    }
+    console.debug(
+      `[CoworkSteer] ${nextActive ? 'opened' : 'closed'} steer input for session ${sessionId}.`,
+    );
+    setSteerInputActive(nextActive);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [
+    disabled,
+    dispatch,
+    draftKey,
+    goalInputActive,
+    resetGoalInput,
+    sessionId,
+    steerDraft,
+    steerInputActive,
+    value,
+    voiceInputLocksEditing,
+  ]);
 
   const containerClass = isCompact
     ? 'relative rounded-2xl border border-border bg-surface shadow-subtle'
@@ -2221,7 +2502,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     void handleIncomingFiles(files, 'paste');
   }, [disabled, handleIncomingFiles, isStreaming, voiceInputLocksEditing]);
 
-  const canSubmit = !disabled && !isVoiceRecognizing && !isPatchingModel && !agentModelIsInvalid && (!!value.trim() || hasAttachments);
+  const canSubmit = !disabled
+    && !isVoiceRecognizing
+    && !isPatchingModel
+    && !agentModelIsInvalid
+    && (!!activeTextareaValue.trim() || (!isStreaming && !steerInputActive && hasAttachments));
   const enhancedContainerClass = isDraggingFiles
     ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
     : containerClass;
@@ -2232,6 +2517,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const sendButtonTitle = `${i18nService.t('sendMessage')} (${getSendShortcutLabel(currentSendShortcut)})`;
   const stopButtonLabel = i18nService.t('stop');
   const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
+  const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+  const streamingSubmitCanRun = goalCommandCanRunWhileStreaming || followUpCanQueueWhileStreaming;
   const currentAgentForDisplay: AgentSelectorOption = currentAgent ?? {
     id: currentAgentId,
     name: currentAgentId,
@@ -2541,7 +2828,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </button>
   );
 
-  const canUseSubmitButton = canSubmit && (!isStreaming || goalCommandCanRunWhileStreaming);
+  const canUseSubmitButton = canSubmit
+    && (!isStreaming || streamingSubmitCanRun);
   const largeSubmitButton = (
     <button
       type="button"
@@ -2592,6 +2880,122 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         onClear={() => dispatch(clearDraftSelectedTextSnippets(draftKey))}
         onRemove={(snippetId) => dispatch(removeDraftSelectedTextSnippet({ draftKey, snippetId }))}
       />
+    </div>
+  ) : null;
+
+  const handleEditQueuedSteer = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    if (!sessionId) return;
+    if (source === 'pending') {
+      dispatch(removePendingSteer({ sessionId, steerId: steer.id }));
+    } else {
+      dispatch(removeRejectedSteer({ sessionId, steerId: steer.id }));
+    }
+    setValue(steer.text);
+    dispatch(setDraftPrompt({ sessionId: draftKey, draft: steer.text }));
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleDeleteQueuedSteer = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    if (!sessionId) return;
+    if (source === 'pending') {
+      dispatch(removePendingSteer({ sessionId, steerId: steer.id }));
+    } else {
+      dispatch(removeRejectedSteer({ sessionId, steerId: steer.id }));
+    }
+  };
+
+  const handleSteerQueuedInput = (steer: CoworkPendingSteer) => {
+    if (!sessionId || remoteManaged) return;
+    if (!isStreaming || !onStop) {
+      console.debug(
+        `[CoworkSteer] queued follow-up remains scheduled without interrupting active turn; `
+        + `session=${sessionId}; id=${steer.id}; chars=${steer.text.length}; `
+        + `reason=${!isStreaming ? 'not_streaming' : 'missing_stop_handler'}.`,
+      );
+      return;
+    }
+    interruptingQueuedSteerIdRef.current = steer.id;
+    console.debug(
+      `[CoworkSteer] interrupting active turn for queued steer follow-up; `
+      + `session=${sessionId}; id=${steer.id}; chars=${steer.text.length}.`,
+    );
+    void Promise.resolve(onStop()).catch((error) => {
+      interruptingQueuedSteerIdRef.current = null;
+      console.error(
+        `[CoworkSteer] failed to stop active turn for queued steer follow-up; `
+        + `session=${sessionId}; id=${steer.id}.`,
+        error,
+      );
+    });
+  };
+
+  const renderSteerQueueItem = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    const isRejected = source === 'rejected';
+    const title = isRejected && steer.error
+      ? `${i18nService.t('coworkSteerRejected')}: ${steer.error}`
+      : `${i18nService.t('coworkSteerQueued')}: ${steer.text}`;
+    return (
+      <div
+        key={steer.id}
+        role="status"
+        title={title}
+        aria-label={title}
+        className={`flex min-w-0 items-center gap-2 rounded-lg border border-border bg-surface-raised/70 px-2.5 py-1.5 text-xs ${
+          isRejected ? 'text-warning' : 'text-secondary'
+        }`}
+      >
+        {isRejected
+          ? <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-warning" />
+          : <ArrowTurnDownRightIcon className="h-4 w-4 shrink-0" />}
+        <span className={`shrink-0 font-medium ${isRejected ? 'text-warning' : 'text-foreground'}`}>
+          {isRejected ? i18nService.t('coworkSteerRejected') : i18nService.t('coworkSteerQueued')}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {steer.text}
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {!isRejected && (
+            <button
+              type="button"
+              onClick={() => handleSteerQueuedInput(steer)}
+              disabled={remoteManaged}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium text-secondary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              title={i18nService.t('coworkSteerInterruptTooltip')}
+              aria-label={i18nService.t('coworkSteerInterruptTooltip')}
+            >
+              <ArrowTurnDownRightIcon className="h-3.5 w-3.5" />
+              <span>{i18nService.t('coworkSteer')}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleEditQueuedSteer(steer, source)}
+            className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground"
+            title={i18nService.t('edit')}
+            aria-label={i18nService.t('edit')}
+          >
+            <PencilIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDeleteQueuedSteer(steer, source)}
+            className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground"
+            title={i18nService.t('delete')}
+            aria-label={i18nService.t('delete')}
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const steerPreview = pendingSteers.length > 0 || rejectedSteers.length > 0 ? (
+    <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
+      <div className="space-y-1.5">
+        {pendingSteers.map(steer => renderSteerQueueItem(steer, 'pending'))}
+        {rejectedSteers.map(steer => renderSteerQueueItem(steer, 'rejected'))}
+      </div>
     </div>
   ) : null;
 
@@ -2682,6 +3086,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </button>
   ) : null;
 
+  const steerModeBadge = steerInputActive ? (
+    <button
+      type="button"
+      onClick={handleToggleSteerInput}
+      className={ACTIVE_CONTEXT_BADGE_BUTTON_CLASS}
+      title={i18nService.t('coworkSteerExit')}
+      aria-label={i18nService.t('coworkSteerExit')}
+    >
+      <span className={ACTIVE_CONTEXT_BADGE_ICON_WRAP_CLASS}>
+        <ArrowTurnDownRightIcon className={ACTIVE_CONTEXT_BADGE_ICON_CLASS} />
+      </span>
+      <span className="max-w-[120px] truncate">{i18nService.t('coworkSteer')}</span>
+      <XMarkIcon className={ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS} />
+    </button>
+  ) : null;
+
   const goalModeBadge = goalInputActive ? (
     <button
       type="button"
@@ -2720,11 +3140,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       <ActiveKitBadge />
       {goalModeBadge}
       {planModeBadge}
+      {steerModeBadge}
     </div>
   ) : null;
-  const textareaPlaceholder = goalInputActive
-    ? i18nService.t('coworkGoalInputPlaceholder')
-    : placeholder;
+  const textareaPlaceholder = steerInputActive
+    ? i18nService.t('coworkSteerPlaceholder')
+    : goalInputActive
+      ? i18nService.t('coworkGoalInputPlaceholder')
+      : placeholder;
 
   const renderMentionTextarea = ({
     rows,
@@ -2738,7 +3161,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         wrapperClassName?: string;
       }) => (
         <div className={wrapperClassName}>
-      {value && hasMediaMentionHighlight && (
+      {activeTextareaValue && hasMediaMentionHighlight && (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
@@ -2770,7 +3193,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       )}
         <textarea
           ref={textareaRef}
-          value={value}
+          value={activeTextareaValue}
         onChange={handleTextareaChange}
         onFocus={handleTextareaFocus}
         onKeyDown={handleKeyDown}
@@ -2931,6 +3354,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       )}
       {!isLarge && compactAttachmentPreview}
       {!isLarge && selectedTextSnippetPreview}
+      {!isLarge && steerPreview}
       {imageVisionHint && (
         <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
           <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
@@ -2964,6 +3388,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card transition-[border-color,box-shadow] duration-200 focus-within:border-primary/35 focus-within:shadow-elevated">
                 {largeAttachmentPreview}
                 {selectedTextSnippetPreview}
+                {steerPreview}
                 {sessionGoalStatusBar}
                 {activeSkillContextRow}
                 {renderMentionTextarea({
@@ -3091,6 +3516,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <>
               {largeAttachmentPreview}
               {selectedTextSnippetPreview}
+              {steerPreview}
               {sessionGoalStatusBar}
               {activeSkillContextRow}
               {renderMentionTextarea({
@@ -3212,22 +3638,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             {isStreaming ? (
               <div className="flex flex-shrink-0 items-center gap-3">
                 {contextUsageControl}
-                {goalCommandCanRunWhileStreaming && (
-                  <button
-                    type="button"
-                    onClick={() => handleSubmit('button')}
-                    disabled={!canUseSubmitButton}
-                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-all ${
-                      canUseSubmitButton
-                        ? 'bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800 active:scale-95 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200'
-                        : 'cursor-not-allowed bg-neutral-300 text-white dark:bg-neutral-700 dark:text-neutral-500'
-                    }`}
-                    aria-label={i18nService.t('sendMessage')}
-                    title={sendButtonTitle}
-                  >
-                    <ArrowUpIcon className="h-[17px] w-[17px]" />
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={handleStopClick}

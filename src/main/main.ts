@@ -71,6 +71,10 @@ import {
   normalizeCoworkSelectedTextSnippets,
 } from '../shared/cowork/selectedText';
 import {
+  CoworkSteerRejectReason,
+  CoworkSteerStatus,
+} from '../shared/cowork/steer';
+import {
   DataMigrationIpc,
   type DataMigrationLastRestoreResult,
   DataMigrationRestoreStatus,
@@ -6550,6 +6554,74 @@ if (!gotTheLock) {
       }
     },
   );
+
+  ipcMain.handle(CoworkIpcChannel.SubmitSteer, async (
+    _event,
+    options: { sessionId: string; text: string; clientSteerId: string },
+  ) => {
+    const clientSteerId = typeof options?.clientSteerId === 'string' && options.clientSteerId.trim()
+      ? options.clientSteerId.trim()
+      : `steer-${Date.now()}`;
+    try {
+      const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
+      const text = typeof options?.text === 'string' ? options.text.trim() : '';
+      if (!sessionId || !text) {
+        return {
+          success: false,
+          status: CoworkSteerStatus.Rejected,
+          clientSteerId,
+          reason: CoworkSteerRejectReason.EmptyInput,
+          error: 'Session id and steer input are required.',
+        };
+      }
+      console.debug(
+        '[CoworkSteer] steer IPC received.',
+        `Session ${sessionId}.`,
+        `Client steer ${clientSteerId}.`,
+        `Chars ${text.length}.`,
+      );
+
+      const engineStatus = await ensureOpenClawRunningForCowork();
+      if (engineStatus.phase !== 'running') {
+        return {
+          ...getEngineNotReadyResponse(engineStatus),
+          status: CoworkSteerStatus.Rejected,
+          clientSteerId,
+          reason: CoworkSteerRejectReason.RuntimeRejected,
+        };
+      }
+
+      const runtime = getCoworkEngineRouter();
+      if (!runtime.submitSteer) {
+        return {
+          success: false,
+          status: CoworkSteerStatus.Rejected,
+          clientSteerId,
+          reason: CoworkSteerRejectReason.RuntimeUnsupported,
+          error: 'Steer is not supported by the current runtime.',
+        };
+      }
+
+      const result = await runtime.submitSteer(sessionId, text, clientSteerId);
+      console.debug(
+        '[CoworkSteer] steer IPC completed.',
+        `Session ${sessionId}.`,
+        `Client steer ${clientSteerId}.`,
+        `Status ${result.status}.`,
+        `Reason ${result.reason ?? 'none'}.`,
+      );
+      return result;
+    } catch (error) {
+      console.error('[CoworkSteer] steer IPC failed:', error);
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason: CoworkSteerRejectReason.Unknown,
+        error: error instanceof Error ? error.message : 'Failed to submit steer input',
+      };
+    }
+  });
 
   ipcMain.handle(CoworkIpcChannel.GoalCommand, async (
     _event,

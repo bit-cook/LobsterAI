@@ -31,6 +31,11 @@ import {
   buildSelectedTextPromptSection,
   type CoworkSelectedTextSnippet,
 } from '../../../shared/cowork/selectedText';
+import {
+  CoworkSteerRejectReason,
+  type CoworkSteerResponse,
+  CoworkSteerStatus,
+} from '../../../shared/cowork/steer';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -401,6 +406,12 @@ type ChannelSessionModelState = {
 type OpenClawSessionPatchGatewayResult = {
   entry?: unknown;
   resolved?: unknown;
+};
+
+type OpenClawQueueSteerResult = {
+  queued?: boolean;
+  reason?: string;
+  errorMessage?: string;
 };
 
 type GatewayRpcHealth = {
@@ -3876,6 +3887,121 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       mediaReferences: options.mediaReferences,
       selectedTextSnippets: options.selectedTextSnippets,
     });
+  }
+
+  async submitSteer(
+    sessionId: string,
+    text: string,
+    clientSteerId: string,
+  ): Promise<CoworkSteerResponse> {
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason: CoworkSteerRejectReason.EmptyInput,
+        error: 'Steer input is required.',
+      };
+    }
+
+    const turn = this.activeTurns.get(sessionId);
+    if (!turn) {
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason: CoworkSteerRejectReason.NoActiveTurn,
+        error: 'There is no active session turn to steer.',
+      };
+    }
+
+    if (turn.contextMaintenanceToolCallIds.size > 0) {
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason: CoworkSteerRejectReason.ContextMaintenance,
+        error: 'The active turn is organizing context and cannot accept steer input yet.',
+      };
+    }
+
+    try {
+      const client = this.requireGatewayClient();
+      const result = await client.request<OpenClawQueueSteerResult>(
+        'sessions.queueSteer',
+        {
+          key: turn.sessionKey,
+          message: trimmedText,
+          idempotencyKey: clientSteerId,
+        },
+        { timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS },
+      );
+      if (result?.queued === true) {
+        console.debug(
+          '[OpenClawRuntime] steer accepted by active-run queue.',
+          `Session ${sessionId}.`,
+          `Client steer ${clientSteerId}.`,
+          `OpenClaw key ${turn.sessionKey}.`,
+        );
+        return {
+          success: true,
+          status: CoworkSteerStatus.Accepted,
+          clientSteerId,
+        };
+      }
+
+      const rejectedReason = this.mapOpenClawSteerRejectReason(result?.reason);
+      console.warn(
+        '[OpenClawRuntime] steer rejected by active-run queue.',
+        `Session ${sessionId}.`,
+        `Client steer ${clientSteerId}.`,
+        `Reason ${result?.reason ?? 'unknown'}.`,
+      );
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason: rejectedReason,
+        error: result?.errorMessage ?? `Steer was rejected by OpenClaw (${result?.reason ?? 'unknown'}).`,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const reason = /unknown method|not found|no handler/i.test(message)
+        ? CoworkSteerRejectReason.RuntimeUnsupported
+        : CoworkSteerRejectReason.RuntimeRejected;
+      console.warn(
+        '[OpenClawRuntime] steer request failed.',
+        `Session ${sessionId}.`,
+        `Client steer ${clientSteerId}.`,
+        `Reason ${reason}.`,
+        error,
+      );
+      return {
+        success: false,
+        status: CoworkSteerStatus.Rejected,
+        clientSteerId,
+        reason,
+        error: reason === CoworkSteerRejectReason.RuntimeUnsupported
+          ? 'The current OpenClaw runtime does not expose same-turn steering yet. Rebuild the pinned runtime with LobsterAI patches.'
+          : message,
+      };
+    }
+  }
+
+  private mapOpenClawSteerRejectReason(reason: string | undefined): CoworkSteerRejectReason {
+    switch (reason) {
+      case 'no_active_run':
+        return CoworkSteerRejectReason.NoActiveTurn;
+      case 'not_streaming':
+        return CoworkSteerRejectReason.NotStreaming;
+      case 'compacting':
+        return CoworkSteerRejectReason.ContextMaintenance;
+      case 'runtime_rejected':
+        return CoworkSteerRejectReason.RuntimeRejected;
+      default:
+        return CoworkSteerRejectReason.Unknown;
+    }
   }
 
   async runGoalCommand(sessionId: string, command: string): Promise<CoworkGoal | null> {
