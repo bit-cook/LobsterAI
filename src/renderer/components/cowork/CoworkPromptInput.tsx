@@ -24,7 +24,10 @@ import {
 } from '../../../shared/cowork/imageAttachments';
 import { isPlanImplementationApproval } from '../../../shared/cowork/planMode';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
-import type { CoworkPendingSteer } from '../../../shared/cowork/steer';
+import {
+  type CoworkPendingSteer,
+  CoworkSteerStatus,
+} from '../../../shared/cowork/steer';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
@@ -47,11 +50,15 @@ import {
 } from '../../store/slices/asrQuotaSlice';
 import {
   addDraftAttachment,
+  addPendingSteer,
   clearDraftAttachments,
   clearDraftSelectedTextSnippets,
+  COWORK_STEER_QUEUE_LIMIT,
   type DraftAttachment,
   PlanConfirmationState,
   removeDraftSelectedTextSnippet,
+  removePendingSteer,
+  removeRejectedSteer,
   setDraftAttachments,
   setDraftCollaborationMode,
   setDraftKitIds,
@@ -478,6 +485,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalInputReturnDraftRef = useRef<string | null>(null);
     const draftStartedAnalyticsRef = useRef(false);
     const inputSourceOverrideRef = useRef<'template' | null>(null);
+    const wasStreamingRef = useRef(isStreaming);
+    const autoSubmittingQueuedSteerRef = useRef<string | null>(null);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
@@ -1010,6 +1019,53 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [dispatch, sessionId, steerDraft, steerValue]);
 
   useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+    if (isStreaming || !wasStreaming || !sessionId || remoteManaged || disabled) {
+      return;
+    }
+
+    const nextQueuedSteer = pendingSteers[0];
+    if (!nextQueuedSteer || autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
+      return;
+    }
+
+    autoSubmittingQueuedSteerRef.current = nextQueuedSteer.id;
+    console.debug(
+      `[CoworkSteer] active turn completed; submitting queued follow-up for session ${sessionId}; `
+      + `id=${nextQueuedSteer.id}; chars=${nextQueuedSteer.text.length}.`,
+    );
+    void Promise.resolve(onSubmit(
+      nextQueuedSteer.text,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      CoworkCollaborationMode.Default,
+    ))
+      .then((result) => {
+        if (result === false) {
+          console.warn(
+            `[CoworkSteer] queued follow-up was rejected by normal continue flow for session ${sessionId}; `
+            + `id=${nextQueuedSteer.id}.`,
+          );
+          return;
+        }
+        dispatch(removePendingSteer({ sessionId, steerId: nextQueuedSteer.id }));
+      })
+      .catch((error) => {
+        console.error(
+          `[CoworkSteer] failed to submit queued follow-up for session ${sessionId}; `
+          + `id=${nextQueuedSteer.id}.`,
+          error,
+        );
+      })
+      .finally(() => {
+        autoSubmittingQueuedSteerRef.current = null;
+      });
+  }, [disabled, dispatch, isStreaming, onSubmit, pendingSteers, remoteManaged, sessionId]);
+
+  useEffect(() => {
     if (!(steerInputActive ? steerValue : value)) {
       setTextareaScrollTop(0);
     }
@@ -1123,12 +1179,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
     let effectiveSubmitMethod = submitMethod;
-    if (steerInputActive) {
-      if (!sessionId || !isStreaming) {
+    const shouldSubmitAsSteer = isStreaming
+      && !goalInputActive
+      && !!sessionId
+      && steerInputActive
+      && canSteer
+      && !remoteManaged;
+    if (shouldSubmitAsSteer) {
+      if (!sessionId) {
         showToast(i18nService.t('coworkSteerNoActiveTurn'));
         return;
       }
-      const steerText = steerValue.trim();
+      const steerText = (steerInputActive ? steerValue : value).trim();
       if (!steerText || disabled || isPatchingModel) {
         reportPromptControl('submit_blocked', {
           blockedReason: !steerText ? 'empty_steer' : disabled ? 'disabled' : 'model_patching',
@@ -1141,7 +1203,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       const clientSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       console.debug(
         `[CoworkSteer] submitting steer from prompt input for session ${sessionId}; `
-        + `id=${clientSteerId}; chars=${steerText.length}.`,
+        + `id=${clientSteerId}; chars=${steerText.length}; `
+        + `mode=${steerInputActive ? 'explicit' : 'inline'}.`,
       );
       const accepted = await coworkService.submitSteer({
         sessionId,
@@ -1151,9 +1214,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (!accepted) {
         return;
       }
-      setSteerValue('');
-      dispatch(setSteerDraft({ sessionId, draft: '' }));
-      setSteerInputActive(false);
+      if (steerInputActive) {
+        setSteerValue('');
+        dispatch(setSteerDraft({ sessionId, draft: '' }));
+        setSteerInputActive(false);
+      } else {
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      }
       reportPromptSubmit({
         ...getPromptContextAnalyticsParams(),
         submitMethod: effectiveSubmitMethod,
@@ -1164,6 +1232,73 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           inputSource: 'steer',
           mediaReferenceCount: 0,
           selectedTextSnippetCount: 0,
+          effectiveCollaborationMode: CoworkCollaborationMode.Default,
+        },
+      });
+      return;
+    }
+
+    const shouldQueueFollowUp = isStreaming
+      && !goalInputActive
+      && !steerInputActive
+      && !!sessionId
+      && !remoteManaged;
+    if (shouldQueueFollowUp) {
+      const followUpText = value.trim();
+      if (!followUpText || disabled || isPatchingModel) {
+        reportPromptControl('submit_blocked', {
+          blockedReason: !followUpText ? 'empty_follow_up' : disabled ? 'disabled' : 'model_patching',
+          submitMethod: effectiveSubmitMethod,
+          ...getPromptTextAnalyticsParams(followUpText),
+        });
+        return;
+      }
+      if (pendingSteers.length >= COWORK_STEER_QUEUE_LIMIT) {
+        console.warn(
+          `[CoworkSteer] queued follow-up rejected because queue is full for session ${sessionId}; `
+          + `limit=${COWORK_STEER_QUEUE_LIMIT}.`,
+        );
+        reportPromptControl('submit_blocked', {
+          blockedReason: 'follow_up_queue_full',
+          submitMethod: effectiveSubmitMethod,
+          queuedFollowUpCount: pendingSteers.length,
+          ...getPromptTextAnalyticsParams(followUpText),
+        });
+        showToast(i18nService.t('coworkSteerQueueFull'));
+        return;
+      }
+
+      const queuedSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const now = Date.now();
+      console.debug(
+        `[CoworkSteer] queued follow-up input for active session ${sessionId}; `
+        + `id=${queuedSteerId}; chars=${followUpText.length}.`,
+      );
+      dispatch(addPendingSteer({
+        id: queuedSteerId,
+        sessionId,
+        text: followUpText,
+        status: CoworkSteerStatus.Pending,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      setValue('');
+      dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      dispatch(clearDraftAttachments(draftKey));
+      dispatch(clearDraftSelectedTextSnippets(draftKey));
+      setImageVisionHint(false);
+      draftStartedAnalyticsRef.current = false;
+      inputSourceOverrideRef.current = null;
+      reportPromptSubmit({
+        ...getPromptContextAnalyticsParams(),
+        submitMethod: effectiveSubmitMethod,
+        promptLength: followUpText.length,
+        promptLineCount: followUpText.length > 0 ? followUpText.split('\n').length : 0,
+        hasPrompt: true,
+        params: {
+          inputSource: 'queued_follow_up',
+          mediaReferenceCount: 0,
+          selectedTextSnippetCount: selectedTextSnippets.length,
           effectiveCollaborationMode: CoworkCollaborationMode.Default,
         },
       });
@@ -1221,7 +1356,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
     const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
-    if (isStreaming && !goalCommandCanRunWhileStreaming) {
+    const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+    if (isStreaming && !goalCommandCanRunWhileStreaming && !followUpCanQueueWhileStreaming) {
       reportPromptControl('submit_blocked', {
         blockedReason: 'streaming',
         submitMethod: effectiveSubmitMethod,
@@ -1523,7 +1659,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
+  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -1659,8 +1795,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
 
     const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
-    const steerCanRunWhileStreaming = steerInputActive && !!sessionId;
-    if (isSendCombo && isStreaming && !goalCommandCanRunWhileStreaming && !steerCanRunWhileStreaming) {
+    const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+    if (isSendCombo && isStreaming && !goalCommandCanRunWhileStreaming && !followUpCanQueueWhileStreaming) {
       event.preventDefault();
       window.dispatchEvent(new CustomEvent('app:showToast', {
         detail: i18nService.t('coworkSessionStillRunning'),
@@ -1696,7 +1832,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
       setShowAddMenu(false);
       setShowSkillsPopover(false);
-      setSteerValue(steerDraft);
+      const nextSteerValue = steerDraft || value;
+      setSteerValue(nextSteerValue);
+      if (!steerDraft && value) {
+        dispatch(setSteerDraft({ sessionId, draft: nextSteerValue }));
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      }
       dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
     }
     console.debug(
@@ -1713,6 +1855,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     sessionId,
     steerDraft,
     steerInputActive,
+    value,
     voiceInputLocksEditing,
   ]);
 
@@ -2334,7 +2477,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     && !isVoiceRecognizing
     && !isPatchingModel
     && !agentModelIsInvalid
-    && (!!activeTextareaValue.trim() || (!steerInputActive && hasAttachments));
+    && (!!activeTextareaValue.trim() || (!isStreaming && !steerInputActive && hasAttachments));
   const enhancedContainerClass = isDraggingFiles
     ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
     : containerClass;
@@ -2345,6 +2488,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const sendButtonTitle = `${i18nService.t('sendMessage')} (${getSendShortcutLabel(currentSendShortcut)})`;
   const stopButtonLabel = i18nService.t('stop');
   const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
+  const followUpCanQueueWhileStreaming = !!sessionId && !remoteManaged;
+  const streamingSubmitCanRun = goalCommandCanRunWhileStreaming || followUpCanQueueWhileStreaming;
   const currentAgentForDisplay: AgentSelectorOption = currentAgent ?? {
     id: currentAgentId,
     name: currentAgentId,
@@ -2654,13 +2799,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </button>
   );
 
-  const canToggleSteerInput = canSteer
-    && !!sessionId
-    && !remoteManaged
-    && !disabled
-    && !voiceInputLocksEditing;
   const canUseSubmitButton = canSubmit
-    && (!isStreaming || goalCommandCanRunWhileStreaming || (steerInputActive && !!sessionId));
+    && (!isStreaming || streamingSubmitCanRun);
   const largeSubmitButton = (
     <button
       type="button"
@@ -2714,23 +2854,100 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </div>
   ) : null;
 
+  const handleEditQueuedSteer = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    if (!sessionId) return;
+    if (source === 'pending') {
+      dispatch(removePendingSteer({ sessionId, steerId: steer.id }));
+    } else {
+      dispatch(removeRejectedSteer({ sessionId, steerId: steer.id }));
+    }
+    setValue(steer.text);
+    dispatch(setDraftPrompt({ sessionId: draftKey, draft: steer.text }));
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleDeleteQueuedSteer = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    if (!sessionId) return;
+    if (source === 'pending') {
+      dispatch(removePendingSteer({ sessionId, steerId: steer.id }));
+    } else {
+      dispatch(removeRejectedSteer({ sessionId, steerId: steer.id }));
+    }
+  };
+
+  const handleSteerQueuedInput = (steer: CoworkPendingSteer) => {
+    if (!sessionId || remoteManaged) return;
+    console.debug(
+      `[CoworkSteer] queued follow-up remains scheduled without interrupting active turn; `
+      + `session=${sessionId}; id=${steer.id}; chars=${steer.text.length}.`,
+    );
+  };
+
+  const renderSteerQueueItem = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
+    const isRejected = source === 'rejected';
+    const title = isRejected && steer.error
+      ? `${i18nService.t('coworkSteerRejected')}: ${steer.error}`
+      : `${i18nService.t('coworkSteerQueued')}: ${steer.text}`;
+    return (
+      <div
+        key={steer.id}
+        role="status"
+        title={title}
+        aria-label={title}
+        className={`flex min-w-0 items-center gap-2 rounded-lg border border-border bg-surface-raised/70 px-2.5 py-1.5 text-xs ${
+          isRejected ? 'text-warning' : 'text-secondary'
+        }`}
+      >
+        {isRejected
+          ? <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-warning" />
+          : <ChevronRightIcon className="h-4 w-4 shrink-0 text-primary" />}
+        <span className={`shrink-0 font-medium ${isRejected ? 'text-warning' : 'text-foreground'}`}>
+          {isRejected ? i18nService.t('coworkSteerRejected') : i18nService.t('coworkSteerQueued')}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {steer.text}
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => handleEditQueuedSteer(steer, source)}
+            className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground"
+            title={i18nService.t('edit')}
+            aria-label={i18nService.t('edit')}
+          >
+            <PencilIcon className="h-3.5 w-3.5" />
+          </button>
+          {!isRejected && (
+            <button
+              type="button"
+              onClick={() => handleSteerQueuedInput(steer)}
+              disabled={remoteManaged}
+              className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              title={i18nService.t('coworkSteerQueueSubmitTooltip')}
+              aria-label={i18nService.t('coworkSteerQueueSubmitTooltip')}
+            >
+              <ChevronRightIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleDeleteQueuedSteer(steer, source)}
+            className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground"
+            title={i18nService.t('delete')}
+            aria-label={i18nService.t('delete')}
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const steerPreview = pendingSteers.length > 0 || rejectedSteers.length > 0 ? (
     <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
-      <div className="space-y-1 rounded-lg border border-border bg-surface-raised/70 px-2.5 py-2 text-xs">
-        {pendingSteers.map(steer => (
-          <div key={steer.id} className="flex min-w-0 items-center gap-2 text-secondary">
-            <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
-            <span className="shrink-0 font-medium text-foreground">{i18nService.t('coworkSteerPending')}</span>
-            <span className="min-w-0 truncate">{steer.text}</span>
-          </div>
-        ))}
-        {rejectedSteers.map(steer => (
-          <div key={steer.id} className="flex min-w-0 items-center gap-2 text-warning">
-            <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0" />
-            <span className="shrink-0 font-medium">{i18nService.t('coworkSteerRejected')}</span>
-            <span className="min-w-0 truncate" title={steer.error}>{steer.text}</span>
-          </div>
-        ))}
+      <div className="space-y-1.5">
+        {pendingSteers.map(steer => renderSteerQueueItem(steer, 'pending'))}
+        {rejectedSteers.map(steer => renderSteerQueueItem(steer, 'rejected'))}
       </div>
     </div>
   ) : null;
@@ -3374,38 +3591,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             {isStreaming ? (
               <div className="flex flex-shrink-0 items-center gap-3">
                 {contextUsageControl}
-                {canToggleSteerInput && (
-                  <button
-                    type="button"
-                    onClick={handleToggleSteerInput}
-                    className={`flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors ${
-                      steerInputActive
-                        ? 'bg-primary/12 text-primary'
-                        : 'text-secondary hover:bg-background/80 hover:text-foreground'
-                    }`}
-                    aria-label={i18nService.t('coworkSteer')}
-                    title={i18nService.t('coworkSteer')}
-                  >
-                    <ChevronRightIcon className="h-3.5 w-3.5" />
-                    <span>{i18nService.t('coworkSteer')}</span>
-                  </button>
-                )}
-                {goalCommandCanRunWhileStreaming && (
-                  <button
-                    type="button"
-                    onClick={() => handleSubmit('button')}
-                    disabled={!canUseSubmitButton}
-                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-all ${
-                      canUseSubmitButton
-                        ? 'bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800 active:scale-95 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200'
-                        : 'cursor-not-allowed bg-neutral-300 text-white dark:bg-neutral-700 dark:text-neutral-500'
-                    }`}
-                    aria-label={i18nService.t('sendMessage')}
-                    title={sendButtonTitle}
-                  >
-                    <ArrowUpIcon className="h-[17px] w-[17px]" />
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={handleStopClick}
