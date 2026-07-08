@@ -24,7 +24,7 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({ isOverlayActive
   }
 
   return (
-    <div className="draggable flex h-9 shrink-0 items-center justify-between border-b border-border bg-background px-3">
+    <div className="draggable flex h-9 shrink-0 items-center justify-between border-b border-border bg-surface-raised px-3">
       <div className="flex min-w-0 items-center gap-2">
         <img
           src="logo.png"
