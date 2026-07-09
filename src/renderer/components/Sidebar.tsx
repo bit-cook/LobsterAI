@@ -47,6 +47,7 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  onWidthChange?: (width: number) => void;
   updateBadge?: React.ReactNode;
   hideLogin?: boolean;
 }
@@ -134,6 +135,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
+  onWidthChange,
   updateBadge,
   hideLogin,
 }) => {
@@ -456,7 +458,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         onToggleCollapse();
         return;
       }
-      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+      const clampedWidth = Math.min(MAX_SIDEBAR_WIDTH, nextWidth);
+      setSidebarWidth(clampedWidth);
+      onWidthChange?.(clampedWidth);
     };
 
     const handleMouseUp = () => {
@@ -469,7 +473,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [isCollapsed, onToggleCollapse, sidebarWidth]);
+  }, [isCollapsed, onToggleCollapse, onWidthChange, sidebarWidth]);
 
   useEffect(() => {
     return () => {

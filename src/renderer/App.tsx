@@ -95,6 +95,7 @@ const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(244);
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateRuntimeState>({
     status: AppUpdateStatus.Idle,
     source: null,
@@ -969,6 +970,7 @@ const App: React.FC = () => {
     <WindowsAppTitleBar
       isOverlayActive={isOverlayActive}
       isSidebarCollapsed={isSidebarCollapsed}
+      sidebarWidth={sidebarWidth}
       onToggleSidebar={isInitialized && !initError ? handleToggleSidebar : undefined}
       sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
     />
@@ -1046,6 +1048,7 @@ const App: React.FC = () => {
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
+          onWidthChange={setSidebarWidth}
           updateBadge={!isSidebarCollapsed ? updateBadge : null}
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />

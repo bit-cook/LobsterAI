@@ -6,6 +6,7 @@ import WindowTitleBar from './WindowTitleBar';
 interface WindowsAppTitleBarProps {
   isOverlayActive?: boolean;
   isSidebarCollapsed?: boolean;
+  sidebarWidth?: number;
   onToggleSidebar?: () => void;
   sidebarToggleLabel?: string;
 }
@@ -13,6 +14,7 @@ interface WindowsAppTitleBarProps {
 const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
   isOverlayActive = false,
   isSidebarCollapsed = false,
+  sidebarWidth = 244,
   onToggleSidebar,
   sidebarToggleLabel,
 }) => {
@@ -34,7 +36,10 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
 
   return (
     <div className="draggable flex h-9 shrink-0 items-center justify-between border-b border-border bg-surface-raised px-3">
-      <div className="flex h-full w-[244px] shrink-0 items-center justify-between">
+      <div
+        className="flex h-full shrink-0 items-center justify-between"
+        style={{ width: Math.max(0, sidebarWidth - 24) }}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <img
             src="logo.png"
