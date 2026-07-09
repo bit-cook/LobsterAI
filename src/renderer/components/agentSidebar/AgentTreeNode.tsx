@@ -484,18 +484,25 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
                 </button>
               )}
 
-              {agent.canExpandTasks && (
+              {(agent.canExpandTasks || agent.canCollapseTasks) && (
                 <ExpandAgentTasksRow
                   isLoading={agent.isLoadingTasks}
-                  label={i18nService.t('myAgentSidebarExpandMore')}
-                  onClick={() => onLoadMoreTasks(agent.id)}
-                />
-              )}
-              {agent.canCollapseTasks && (
-                <ExpandAgentTasksRow
-                  isLoading={false}
-                  label={i18nService.t('myAgentSidebarCollapse')}
-                  onClick={() => onCollapseTasks(agent.id)}
+                  label={agent.canExpandTasks
+                    ? i18nService.t('myAgentSidebarExpandMore')
+                    : i18nService.t('myAgentSidebarCollapse')}
+                  onClick={() => {
+                    if (agent.canExpandTasks) {
+                      onLoadMoreTasks(agent.id);
+                    } else {
+                      onCollapseTasks(agent.id);
+                    }
+                  }}
+                  secondaryLabel={agent.canExpandTasks && agent.canCollapseTasks
+                    ? i18nService.t('myAgentSidebarCollapse')
+                    : undefined}
+                  onSecondaryClick={agent.canExpandTasks && agent.canCollapseTasks
+                    ? () => onCollapseTasks(agent.id)
+                    : undefined}
                 />
               )}
             </div>

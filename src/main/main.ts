@@ -7155,7 +7155,7 @@ if (!gotTheLock) {
         if (workingDirectoryChanged && agent) {
           refreshImSessionWorkingDirectoriesForAgent(agent.id);
         }
-        const shouldSyncOpenClawConfig = Object.keys(updates).some(key => key !== 'pinned');
+        const shouldSyncOpenClawConfig = Object.keys(updates).some(key => key !== 'pinned' && key !== 'sortOrder');
         if (shouldSyncOpenClawConfig) {
           syncOpenClawConfig({
             reason: workingDirectoryChanged ? 'agent-working-directory-updated' : 'agent-updated',
@@ -7173,6 +7173,18 @@ if (!gotTheLock) {
       }
     },
   );
+
+  ipcMain.handle(AgentIpcChannel.Reorder, async (_event, agentIds: string[]) => {
+    try {
+      const agents = getAgentManager().reorderAgents(agentIds);
+      return { success: true, agents };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reorder agents',
+      };
+    }
+  });
 
   ipcMain.handle(AgentIpcChannel.CleanupLegacyIdentityBlock, async (_event, id: string) => {
     try {

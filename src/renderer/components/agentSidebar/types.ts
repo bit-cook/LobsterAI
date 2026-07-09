@@ -8,6 +8,7 @@ export interface AgentSidebarAgentSummary {
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
 }
 
 export interface AgentSidebarTaskNode {

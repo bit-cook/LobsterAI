@@ -309,10 +309,15 @@ contextBridge.exposeInMainWorld('electron', {
         subagentAllowAgentIds?: string[];
         enabled?: boolean;
         pinned?: boolean;
+        sortOrder?: number | null;
       },
     ) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.Update, id, updates);
       return result?.success ? result.agent : null;
+    },
+    reorder: async (agentIds: string[]) => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.Reorder, agentIds);
+      return result?.success ? result.agents : null;
     },
     cleanupLegacyIdentityBlock: async (id: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.CleanupLegacyIdentityBlock, id);

@@ -14,6 +14,7 @@ export interface Agent {
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -63,4 +64,5 @@ export interface UpdateAgentRequest {
   subagentAllowAgentIds?: string[];
   enabled?: boolean;
   pinned?: boolean;
+  sortOrder?: number | null;
 }

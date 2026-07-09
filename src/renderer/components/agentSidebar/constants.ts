@@ -14,5 +14,5 @@ export const AgentSidebarPreferenceKey = {
 
 export const AgentSidebarPageSize = {
   Preview: 6,
-  AllBatch: 100,
+  ExpandBatch: 10,
 } as const;
