@@ -966,13 +966,18 @@ const App: React.FC = () => {
       onClick={handleOpenUpdateModal}
     />
   ) : null;
+  const canUseWindowsTopBarActions = isInitialized && !initError;
+  const collapsedHeaderUpdateBadge = isSidebarCollapsed && !isWindows ? updateBadge : null;
   const windowsStandaloneTitleBar = isWindows ? (
     <WindowsAppTitleBar
       isOverlayActive={isOverlayActive}
       isSidebarCollapsed={isSidebarCollapsed}
       sidebarWidth={sidebarWidth}
-      onToggleSidebar={isInitialized && !initError ? handleToggleSidebar : undefined}
+      onToggleSidebar={canUseWindowsTopBarActions ? handleToggleSidebar : undefined}
+      onNewChat={canUseWindowsTopBarActions ? handleNewChat : undefined}
       sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+      newChatLabel={i18nService.t('newChat')}
+      updateBadge={canUseWindowsTopBarActions && isSidebarCollapsed ? updateBadge : null}
     />
   ) : null;
 
@@ -1061,7 +1066,7 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 onCreateSkillByChat={handleCreateSkillByChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
                 readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
               />
             ) : mainView === 'scheduledTasks' ? (
@@ -1069,14 +1074,14 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : mainView === 'kits' ? (
               <KitsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
                 onTryAsking={handleKitTryAsking}
                 onUseKit={handleKitUse}
               />
@@ -1085,7 +1090,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : (
               <CoworkView
@@ -1095,7 +1100,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
               />
             )}
           </div>

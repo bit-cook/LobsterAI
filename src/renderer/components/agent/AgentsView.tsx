@@ -26,6 +26,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
   updateBadge,
 }) => {
   const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const [presets, setPresets] = useState<PresetAgent[]>([]);
@@ -62,7 +63,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
       {/* Header */}
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
         <div className="flex items-center space-x-3 h-8">
-          {isSidebarCollapsed && (
+          {isSidebarCollapsed && !isWindows && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
               <button
                 type="button"

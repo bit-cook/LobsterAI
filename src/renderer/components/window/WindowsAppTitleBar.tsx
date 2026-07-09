@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 
+import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import WindowTitleBar from './WindowTitleBar';
 
@@ -8,7 +9,10 @@ interface WindowsAppTitleBarProps {
   isSidebarCollapsed?: boolean;
   sidebarWidth?: number;
   onToggleSidebar?: () => void;
+  onNewChat?: () => void;
   sidebarToggleLabel?: string;
+  newChatLabel?: string;
+  updateBadge?: React.ReactNode;
 }
 
 const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
@@ -16,7 +20,10 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
   isSidebarCollapsed = false,
   sidebarWidth = 244,
   onToggleSidebar,
+  onNewChat,
   sidebarToggleLabel,
+  newChatLabel,
+  updateBadge,
 }) => {
   useEffect(() => {
     if (window.electron.platform !== 'win32') return;
@@ -29,6 +36,17 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
       // Best-effort diagnostic only.
     }
   }, []);
+
+  const handleNewChatClick = useCallback(() => {
+    const message = `new chat requested from top bar isSidebarCollapsed=${isSidebarCollapsed}`;
+    console.debug(`[WindowsAppTitleBar] ${message}`);
+    try {
+      window.electron?.log?.fromRenderer?.('debug', 'WindowsAppTitleBar', message);
+    } catch {
+      // Best-effort diagnostic only.
+    }
+    onNewChat?.();
+  }, [isSidebarCollapsed, onNewChat]);
 
   if (window.electron.platform !== 'win32') {
     return null;
@@ -51,16 +69,32 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
             LobsterAI
           </span>
         </div>
-        {onToggleSidebar && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface transition-colors"
-            aria-label={sidebarToggleLabel}
-            title={sidebarToggleLabel}
-          >
-            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isSidebarCollapsed} />
-          </button>
+        {(onToggleSidebar || onNewChat || updateBadge) && (
+          <div className="non-draggable flex shrink-0 items-center gap-1">
+            {onToggleSidebar && (
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface transition-colors"
+                aria-label={sidebarToggleLabel}
+                title={sidebarToggleLabel}
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed={isSidebarCollapsed} />
+              </button>
+            )}
+            {onNewChat && (
+              <button
+                type="button"
+                onClick={handleNewChatClick}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface transition-colors"
+                aria-label={newChatLabel}
+                title={newChatLabel}
+              >
+                <ComposeIcon className="h-4 w-4" />
+              </button>
+            )}
+            {updateBadge}
+          </div>
         )}
       </div>
       <WindowTitleBar inline isOverlayActive={isOverlayActive} />
