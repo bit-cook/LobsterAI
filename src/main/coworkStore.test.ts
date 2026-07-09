@@ -99,6 +99,7 @@ function setupDb(): void {
       enabled INTEGER NOT NULL DEFAULT 1,
       pinned INTEGER NOT NULL DEFAULT 0,
       pin_order INTEGER,
+      sort_order INTEGER,
       is_default INTEGER NOT NULL DEFAULT 0,
       source TEXT NOT NULL DEFAULT 'custom',
       preset_id TEXT NOT NULL DEFAULT '',
@@ -946,6 +947,19 @@ test('agent unpinning clears pin order', () => {
 
   expect(unpinned?.pinned).toBe(false);
   expect(unpinned?.pinOrder).toBeNull();
+});
+
+test('reorderAgents persists explicit agent order', () => {
+  const first = store.createAgent({ name: 'First Sort Agent' });
+  const second = store.createAgent({ name: 'Second Sort Agent' });
+  const third = store.createAgent({ name: 'Third Sort Agent' });
+
+  const reordered = store.reorderAgents([third.id, first.id, second.id]);
+
+  expect(reordered.map(agent => agent.id).slice(0, 3)).toEqual([third.id, first.id, second.id]);
+  expect(reordered.find(agent => agent.id === third.id)?.sortOrder).toBe(1);
+  expect(reordered.find(agent => agent.id === first.id)?.sortOrder).toBe(2);
+  expect(reordered.find(agent => agent.id === second.id)?.sortOrder).toBe(3);
 });
 
 test('getConfig defaults skipMissedJobs to true when config is missing', () => {

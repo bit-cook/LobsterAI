@@ -10,6 +10,7 @@ interface AgentSummary {
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
   isDefault: boolean;
   source: 'custom' | 'preset';
   skillIds: string[];

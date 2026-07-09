@@ -196,6 +196,7 @@ export class SqliteStore {
         enabled INTEGER NOT NULL DEFAULT 1,
         pinned INTEGER NOT NULL DEFAULT 0,
         pin_order INTEGER,
+        sort_order INTEGER,
         is_default INTEGER NOT NULL DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'custom',
         preset_id TEXT NOT NULL DEFAULT '',
@@ -468,6 +469,10 @@ export class SqliteStore {
         this.db.exec('ALTER TABLE agents ADD COLUMN pin_order INTEGER;');
         this.didRunMigration = true;
       }
+      if (!agentColNames.includes('sort_order')) {
+        this.db.exec('ALTER TABLE agents ADD COLUMN sort_order INTEGER;');
+        this.didRunMigration = true;
+      }
       if (!agentColNames.includes('subagent_allow_agent_ids')) {
         this.db.exec("ALTER TABLE agents ADD COLUMN subagent_allow_agent_ids TEXT NOT NULL DEFAULT '[]';");
         this.didRunMigration = true;
@@ -530,6 +535,33 @@ export class SqliteStore {
       }
     } catch (error) {
       console.warn('[SqliteStore] failed to ensure default agent:', error);
+    }
+
+    // Migration: Preserve the existing agent display order in the new explicit sort column.
+    try {
+      const rows = this.db
+        .prepare(
+          `
+          SELECT id
+          FROM agents
+          WHERE sort_order IS NULL
+          ORDER BY is_default DESC, created_at ASC, id ASC
+        `,
+        )
+        .all() as Array<{ id: string }>;
+
+      if (rows.length > 0) {
+        const updateSortOrder = this.db.prepare('UPDATE agents SET sort_order = ? WHERE id = ?');
+        const backfillSortOrder = this.db.transaction((agents: Array<{ id: string }>) => {
+          agents.forEach((agent, index) => {
+            updateSortOrder.run(index + 1, agent.id);
+          });
+        });
+        backfillSortOrder(rows);
+        this.didRunMigration = true;
+      }
+    } catch (error) {
+      console.warn('[SqliteStore] failed to backfill agent sort order:', error);
     }
 
     // Migration: Replace legacy text/emoji/designed agent icons with the latest SVG avatar format.

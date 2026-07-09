@@ -38,6 +38,7 @@ const makeAgent = (
   id: string,
   pinned = false,
   pinOrder: number | null = null,
+  sortOrder: number | null = null,
 ): AgentSidebarAgentSummary => ({
   id,
   name: id,
@@ -45,6 +46,7 @@ const makeAgent = (
   enabled: true,
   pinned,
   pinOrder,
+  sortOrder,
 });
 
 test('sortAgentSidebarTasks keeps unpinned tasks ordered by last update time', () => {
@@ -90,6 +92,22 @@ test('sortAgentSidebarAgents keeps pinned agents in first-pinned-first order', (
     'second-pinned',
     'regular',
     'another-regular',
+  ]);
+});
+
+test('sortAgentSidebarAgents orders agents within pin groups by explicit sort order', () => {
+  const sorted = sortAgentSidebarAgents([
+    makeAgent('regular-second', false, null, 4),
+    makeAgent('pinned-second', true, 2, 2),
+    makeAgent('regular-first', false, null, 3),
+    makeAgent('pinned-first', true, 1, 1),
+  ]);
+
+  expect(sorted.map((agent) => agent.id)).toEqual([
+    'pinned-first',
+    'pinned-second',
+    'regular-first',
+    'regular-second',
   ]);
 });
 

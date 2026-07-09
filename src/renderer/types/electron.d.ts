@@ -610,8 +610,10 @@ interface IElectronAPI {
         subagentAllowAgentIds?: string[];
         enabled?: boolean;
         pinned?: boolean;
+        sortOrder?: number | null;
       },
     ) => Promise<Agent>;
+    reorder: (agentIds: string[]) => Promise<Agent[] | null>;
     cleanupLegacyIdentityBlock: (id: string) => Promise<AgentLegacyIdentityCleanupResult>;
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;

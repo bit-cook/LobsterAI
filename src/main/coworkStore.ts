@@ -383,6 +383,7 @@ export interface Agent {
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -417,6 +418,7 @@ export interface UpdateAgentRequest {
   subagentAllowAgentIds?: string[];
   enabled?: boolean;
   pinned?: boolean;
+  sortOrder?: number | null;
 }
 
 
@@ -2798,6 +2800,7 @@ export class CoworkStore {
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
+      sort_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -2806,7 +2809,8 @@ export class CoworkStore {
     }
 
     const rows = this.getAll<AgentRow>(`
-      SELECT * FROM agents ORDER BY is_default DESC, created_at ASC
+      SELECT * FROM agents
+      ORDER BY COALESCE(sort_order, 2147483647) ASC, is_default DESC, created_at ASC
     `);
 
     return rows.map(row => this.mapAgentRow(row));
@@ -2827,6 +2831,7 @@ export class CoworkStore {
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
+      sort_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -2863,8 +2868,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -2880,6 +2885,7 @@ export class CoworkStore {
           JSON.stringify(normalizeStringIdList(request.subagentAllowAgentIds)),
           request.source || 'custom',
           request.presetId || '',
+          this.getNextAgentSortOrder(),
           now,
           now,
         );
@@ -2963,10 +2969,41 @@ export class CoworkStore {
         setClauses.push('pin_order = NULL');
       }
     }
+    if (updates.sortOrder !== undefined) {
+      setClauses.push('sort_order = ?');
+      values.push(updates.sortOrder);
+    }
 
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
     return this.getAgent(id);
+  }
+
+  reorderAgents(agentIds: string[]): Agent[] {
+    const normalizedIds = Array.from(new Set(agentIds.map(id => id.trim()).filter(Boolean)));
+    if (normalizedIds.length === 0) return this.listAgents();
+
+    const existingAgents = this.listAgents();
+    const existingIds = new Set(existingAgents.map(agent => agent.id));
+    const orderedIds = normalizedIds.filter(id => existingIds.has(id));
+    if (orderedIds.length === 0) return this.listAgents();
+    const orderedIdSet = new Set(orderedIds);
+    const finalIds = [
+      ...orderedIds,
+      ...existingAgents
+        .map(agent => agent.id)
+        .filter(id => !orderedIdSet.has(id)),
+    ];
+
+    const now = Date.now();
+    const updateSortOrder = this.db.prepare('UPDATE agents SET sort_order = ?, updated_at = ? WHERE id = ?');
+    const reorder = this.db.transaction((ids: string[]) => {
+      ids.forEach((id, index) => {
+        updateSortOrder.run(index + 1, now, id);
+      });
+    });
+    reorder(finalIds);
+    return this.listAgents();
   }
 
   deleteAgent(id: string): boolean {
@@ -3003,6 +3040,7 @@ export class CoworkStore {
     enabled: number;
     pinned?: number | null;
     pin_order?: number | null;
+    sort_order?: number | null;
     is_default: number;
     source: string;
     preset_id: string;
@@ -3025,6 +3063,7 @@ export class CoworkStore {
       enabled: Boolean(row.enabled),
       pinned: Boolean(row.pinned),
       pinOrder: row.pinned ? (row.pin_order ?? null) : null,
+      sortOrder: row.sort_order ?? null,
       isDefault: Boolean(row.is_default),
       source: row.source as AgentSource,
       presetId: row.preset_id,
@@ -3129,6 +3168,13 @@ export class CoworkStore {
   private getNextAgentPinOrder(): number {
     const row = this.getOne<{ max_order: number | null }>(
       'SELECT MAX(pin_order) as max_order FROM agents WHERE pinned = 1',
+    );
+    return (row?.max_order ?? 0) + 1;
+  }
+
+  private getNextAgentSortOrder(): number {
+    const row = this.getOne<{ max_order: number | null }>(
+      'SELECT MAX(sort_order) as max_order FROM agents',
     );
     return (row?.max_order ?? 0) + 1;
   }
