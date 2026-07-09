@@ -10,12 +10,12 @@ function finishedPayload(overrides: Record<string, unknown> = {}): Record<string
     delivered: true,
     deliveryStatus: 'delivered',
     delivery: {
-      intended: { channel: 'openclaw-weixin', to: 'o9cq809ZEC25@im.wechat' },
+      intended: { channel: 'openclaw-weixin', to: 'WxId_ZhangSan@im.wechat' },
       resolved: {
         ok: true,
         channel: 'openclaw-weixin',
-        to: 'o9cq809ZEC25@im.wechat',
-        accountId: '91fcaf18cb3a-im-bot',
+        to: 'WxId_ZhangSan@im.wechat',
+        accountId: 'weixin-bot-1',
         source: 'explicit',
       },
       delivered: true,
@@ -28,8 +28,8 @@ describe('extractCronDeliveredTarget', () => {
   test('extracts the resolved target from a delivered finished event', () => {
     expect(extractCronDeliveredTarget(finishedPayload())).toEqual({
       channel: 'openclaw-weixin',
-      to: 'o9cq809ZEC25@im.wechat',
-      accountId: '91fcaf18cb3a-im-bot',
+      to: 'WxId_ZhangSan@im.wechat',
+      accountId: 'weixin-bot-1',
     });
   });
 

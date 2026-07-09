@@ -6524,7 +6524,7 @@ test('prefetchChannelUserMessages uses latest user only for recreated channel se
 
   await adapter.prefetchChannelUserMessages(
     session.id,
-    'agent:main:feishu:3e462f80:direct:ou_ca9972aed8fa926570225cf3714aa63a',
+    'agent:main:feishu:feishu-bot-1:direct:ou_zhangsan',
   );
 
   expect(getReplaceCallCount()).toBe(0);
@@ -6543,7 +6543,7 @@ test('onSessionDeleted deletes gateway transcripts for all session keys', async 
     deleteSubagentRunsByParent: vi.fn(),
   };
   const adapter = new OpenClawRuntimeAdapter({} as never, {}, {}, subagentRunStore as never);
-  const channelSessionKey = 'agent:main:feishu:3e462f80:direct:ou_ca9972aed8fa926570225cf3714aa63a';
+  const channelSessionKey = 'agent:main:feishu:feishu-bot-1:direct:ou_zhangsan';
   const managedSessionKey = 'agent:main:lobsterai:session-1';
   adapter.gatewayClient = {
     start: () => {},

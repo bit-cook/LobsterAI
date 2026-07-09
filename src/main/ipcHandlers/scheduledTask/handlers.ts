@@ -7,11 +7,19 @@ import {
   SessionTarget as STSessionTarget,
 } from '../../../scheduledTask/constants';
 import type { CronJobService } from '../../../scheduledTask/cronJobService';
+import type {
+  ScheduledTask,
+  ScheduledTaskDelivery,
+  ScheduledTaskInput,
+  ScheduledTaskPayload,
+} from '../../../scheduledTask/types';
 import { AgentId } from '../../../shared/agent/constants';
 import { OpenClawEnginePhase } from '../../../shared/openclawEngine/constants';
 import {
   imConversationDisplayName,
+  type ParsedImConversationId,
   parseImConversationId,
+  type Platform,
   PlatformRegistry,
 } from '../../../shared/platform';
 import {
@@ -31,6 +39,12 @@ type ConversationMappingForList = {
   coworkSessionId: string;
   agentId: string;
   lastActiveAt: string;
+};
+
+type AnnounceNormalizationContext = {
+  platform: Platform;
+  rawTo: string;
+  parsedConversation: ParsedImConversationId;
 };
 
 export interface ScheduledTaskHandlerDeps {
@@ -167,23 +181,20 @@ function logChannelConversationList(params: {
 }
 
 /**
- * Normalizes an announce-mode delivery payload for OpenClaw native delivery.
- * Mutates `normalizedInput` in place: sets sessionTarget, converts SystemEvent
- * payloads to AgentTurn, strips IM subtype prefixes from delivery.to, restores
- * the channel-native target casing/account from gateway sessions, and primes
- * the DingTalk reply route when needed.
+ * Fast, local-only announce normalization. It never queries gateway session
+ * history, so it is safe for background migration and manual-run repair.
  */
-async function applyAnnounceDeliveryNormalization(
+function applyLocalAnnounceDeliveryNormalization(
   normalizedInput: Record<string, any>,
-  deps: Pick<ScheduledTaskHandlerDeps, 'getIMGatewayManager' | 'getOpenClawRuntimeAdapter'>,
-): Promise<void> {
-  const { getIMGatewayManager, getOpenClawRuntimeAdapter } = deps;
+  deps: Pick<ScheduledTaskHandlerDeps, 'getIMGatewayManager'>,
+): AnnounceNormalizationContext | null {
+  const { getIMGatewayManager } = deps;
   const delivery = normalizedInput.delivery;
   if (!(delivery && delivery.mode === STDeliveryMode.Announce && delivery.channel && delivery.to)) {
-    return;
+    return null;
   }
   const platform = PlatformRegistry.platformOfChannel(delivery.channel);
-  if (!platform) return;
+  if (!platform) return null;
 
   normalizedInput.sessionTarget = STSessionTarget.Isolated;
   if (normalizedInput.payload?.kind === STPayloadKind.SystemEvent) {
@@ -218,13 +229,21 @@ async function applyAnnounceDeliveryNormalization(
   // agent so the gateway mirrors the delivered result into the conversation
   // session the LobsterAI record maps to, instead of a main-agent shadow
   // session that stays invisible in the UI.
-  if (!normalizedInput.agentId) {
+  const existingAgentId = typeof normalizedInput.agentId === 'string'
+    ? normalizedInput.agentId.trim()
+    : '';
+  if (!existingAgentId || existingAgentId === AgentId.Main) {
     try {
       const imStore = getIMGatewayManager()?.getIMStore();
+      const imSettings = imStore?.getIMSettings?.();
       const boundAgentId = resolveConversationAgentIdFromMappings(
         imStore?.listSessionMappings(platform) ?? [],
         rawTo,
         parsedConversation.accountId ?? delivery.accountId,
+        {
+          platform,
+          platformAgentBindings: imSettings?.platformAgentBindings,
+        },
       );
       if (boundAgentId && boundAgentId !== AgentId.Main) {
         normalizedInput.agentId = boundAgentId;
@@ -236,6 +255,20 @@ async function applyAnnounceDeliveryNormalization(
     } catch (error) {
       console.warn('[ScheduledTask] failed to resolve conversation agent binding:', error);
     }
+  }
+
+  return { platform, rawTo, parsedConversation };
+}
+
+async function restoreAnnounceDeliveryHintsFromGateway(
+  normalizedInput: Record<string, any>,
+  context: AnnounceNormalizationContext,
+  deps: Pick<ScheduledTaskHandlerDeps, 'getOpenClawRuntimeAdapter'>,
+): Promise<void> {
+  const { getOpenClawRuntimeAdapter } = deps;
+  const delivery = normalizedInput.delivery;
+  if (!(delivery && delivery.mode === STDeliveryMode.Announce && delivery.channel && delivery.to)) {
+    return;
   }
 
   // Conversation ids are lowercased session-key derivatives; case-sensitive
@@ -256,7 +289,7 @@ async function applyAnnounceDeliveryNormalization(
           sessions: Array.isArray(result?.sessions) ? result.sessions : [],
           channel: delivery.channel,
           peerId: delivery.to,
-          preferredAccountId: parsedConversation.accountId,
+          preferredAccountId: context.parsedConversation.accountId,
         });
         if (hints) {
           if (hints.to !== delivery.to) {
@@ -277,18 +310,129 @@ async function applyAnnounceDeliveryNormalization(
   } catch (error) {
     console.warn('[ScheduledTask] failed to restore IM delivery target from gateway sessions:', error);
   }
+}
 
-  if (platform === 'dingtalk') {
+async function primeAnnounceReplyRoute(
+  context: AnnounceNormalizationContext,
+  deps: Pick<ScheduledTaskHandlerDeps, 'getIMGatewayManager'>,
+): Promise<void> {
+  if (context.platform === 'dingtalk') {
+    const { getIMGatewayManager } = deps;
     const imStore = getIMGatewayManager()?.getIMStore();
-    const mapping = imStore?.getSessionMapping(rawTo, platform);
+    const mapping = imStore?.getSessionMapping(context.rawTo, context.platform);
     if (mapping) {
       await getIMGatewayManager()!.primeConversationReplyRoute(
-        platform,
-        rawTo,
+        context.platform,
+        context.rawTo,
         mapping.coworkSessionId,
       );
     }
   }
+}
+
+/**
+ * Normalizes an announce-mode delivery payload for OpenClaw native delivery.
+ * Mutates `normalizedInput` in place: sets sessionTarget, converts SystemEvent
+ * payloads to AgentTurn, strips IM subtype prefixes from delivery.to, restores
+ * the channel-native target casing/account from gateway sessions, and primes
+ * the DingTalk reply route when needed.
+ */
+async function applyAnnounceDeliveryNormalization(
+  normalizedInput: Record<string, any>,
+  deps: Pick<ScheduledTaskHandlerDeps, 'getIMGatewayManager' | 'getOpenClawRuntimeAdapter'>,
+): Promise<void> {
+  const context = applyLocalAnnounceDeliveryNormalization(normalizedInput, deps);
+  if (!context) return;
+  await restoreAnnounceDeliveryHintsFromGateway(normalizedInput, context, deps);
+  await primeAnnounceReplyRoute(context, deps);
+}
+
+function cloneDelivery(delivery?: ScheduledTaskDelivery): ScheduledTaskDelivery | undefined {
+  return delivery ? { ...delivery } : undefined;
+}
+
+function clonePayload(payload: ScheduledTaskPayload): ScheduledTaskPayload {
+  return { ...payload };
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function buildLocalAnnounceNormalizationPatch(
+  task: ScheduledTask,
+  deps: Pick<ScheduledTaskHandlerDeps, 'getIMGatewayManager'>,
+): Partial<ScheduledTaskInput> | null {
+  const normalizedInput: Record<string, any> = {
+    sessionTarget: task.sessionTarget,
+    payload: clonePayload(task.payload),
+    delivery: cloneDelivery(task.delivery),
+    agentId: task.agentId ?? undefined,
+    sessionKey: task.sessionKey ?? undefined,
+  };
+  const context = applyLocalAnnounceDeliveryNormalization(normalizedInput, deps);
+  if (!context) return null;
+
+  const patch: Partial<ScheduledTaskInput> = {};
+  if (normalizedInput.sessionTarget !== task.sessionTarget) {
+    patch.sessionTarget = normalizedInput.sessionTarget;
+  }
+  if (stableJson(normalizedInput.payload) !== stableJson(task.payload)) {
+    patch.payload = normalizedInput.payload;
+  }
+  if (stableJson(normalizedInput.delivery) !== stableJson(task.delivery)) {
+    patch.delivery = normalizedInput.delivery;
+  }
+  if (
+    normalizedInput.agentId !== undefined &&
+    normalizedInput.agentId !== (task.agentId ?? undefined)
+  ) {
+    patch.agentId = normalizedInput.agentId;
+  }
+  if (
+    normalizedInput.sessionKey !== undefined &&
+    normalizedInput.sessionKey !== (task.sessionKey ?? undefined)
+  ) {
+    patch.sessionKey = normalizedInput.sessionKey;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+async function migrateScheduledTaskAnnounceJob(
+  task: ScheduledTask,
+  deps: Pick<ScheduledTaskHandlerDeps, 'getCronJobService' | 'getIMGatewayManager'>,
+): Promise<boolean> {
+  const patch = buildLocalAnnounceNormalizationPatch(task, deps);
+  if (!patch) return false;
+  await deps.getCronJobService().updateJob(task.id, patch);
+  console.log(
+    '[ScheduledTask] migrated IM announce job:',
+    JSON.stringify({
+      id: task.id,
+      deliveryChannel: task.delivery?.channel,
+      deliveryTo: task.delivery?.to,
+      patchedFields: Object.keys(patch),
+    }),
+  );
+  return true;
+}
+
+export async function migrateScheduledTaskAnnounceJobs(
+  deps: Pick<ScheduledTaskHandlerDeps, 'getCronJobService' | 'getIMGatewayManager'>,
+): Promise<{ checked: number; updated: number }> {
+  const tasks = await deps.getCronJobService().listJobs();
+  let updated = 0;
+  for (const task of tasks) {
+    if (await migrateScheduledTaskAnnounceJob(task, deps)) {
+      updated += 1;
+    }
+  }
+  const result = { checked: tasks.length, updated };
+  if (updated > 0) {
+    console.log('[ScheduledTask] migrated existing IM announce jobs:', JSON.stringify(result));
+  }
+  return result;
 }
 
 async function ensureScheduledTaskGatewayClient(
@@ -409,7 +553,15 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
 
   ipcMain.handle(ScheduledTaskIpc.RunManually, async (_event, id: string) => {
     try {
-      await getCronJobService().runJob(id);
+      const cronJobService = getCronJobService();
+      const task = await cronJobService.getJob(id);
+      if (task) {
+        await migrateScheduledTaskAnnounceJob(task, {
+          getCronJobService,
+          getIMGatewayManager,
+        });
+      }
+      await cronJobService.runJob(id);
       return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

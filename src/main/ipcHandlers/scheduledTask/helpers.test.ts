@@ -7,7 +7,7 @@ import {
   resolveImDeliveryHintsFromSessions,
 } from './helpers';
 
-const TRUE_CASE_PEER = 'o9cq809ZEC25-4jLkdw3AHTKPE9c@im.wechat';
+const TRUE_CASE_PEER = 'WxId_ZhangSan@im.wechat';
 const LOWER_PEER = TRUE_CASE_PEER.toLowerCase();
 
 function weixinSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -15,7 +15,7 @@ function weixinSession(overrides: Record<string, unknown> = {}): Record<string, 
     updatedAt: 1_000,
     lastChannel: 'openclaw-weixin',
     lastTo: TRUE_CASE_PEER,
-    lastAccountId: '91fcaf18cb3a-im-bot',
+    lastAccountId: 'weixin-bot-1',
     ...overrides,
   };
 }
@@ -27,7 +27,7 @@ describe('resolveImDeliveryHintsFromSessions', () => {
       channel: 'openclaw-weixin',
       peerId: LOWER_PEER,
     });
-    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: '91fcaf18cb3a-im-bot' });
+    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: 'weixin-bot-1' });
   });
 
   test('ignores sessions from other channels, other peers, and malformed rows', () => {
@@ -55,7 +55,7 @@ describe('resolveImDeliveryHintsFromSessions', () => {
       channel: 'openclaw-weixin',
       peerId: LOWER_PEER,
     });
-    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: '91fcaf18cb3a-im-bot' });
+    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: 'weixin-bot-1' });
   });
 
   test('prefers sessions owned by the preferred account over newer ones', () => {
@@ -66,9 +66,9 @@ describe('resolveImDeliveryHintsFromSessions', () => {
       ],
       channel: 'openclaw-weixin',
       peerId: LOWER_PEER,
-      preferredAccountId: '91fcaf18cb3a-im-bot',
+      preferredAccountId: 'weixin-bot-1',
     });
-    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: '91fcaf18cb3a-im-bot' });
+    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: 'weixin-bot-1' });
   });
 
   test('falls back to deliveryContext fields when last* fields are absent', () => {
@@ -79,14 +79,14 @@ describe('resolveImDeliveryHintsFromSessions', () => {
           deliveryContext: {
             channel: 'openclaw-weixin',
             to: TRUE_CASE_PEER,
-            accountId: '91fcaf18cb3a-im-bot',
+            accountId: 'weixin-bot-1',
           },
         },
       ],
       channel: 'openclaw-weixin',
       peerId: LOWER_PEER,
     });
-    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: '91fcaf18cb3a-im-bot' });
+    expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: 'weixin-bot-1' });
   });
 
   test('matches channel aliases through the platform registry', () => {
@@ -108,34 +108,53 @@ describe('resolveImDeliveryHintsFromSessions', () => {
 describe('resolveConversationAgentIdFromMappings', () => {
   const mappings = [
     {
-      imConversationId: 'f1591db9:direct:bjwangning@corp.netease.com',
+      imConversationId: 'popo-bot-1:direct:zhangsan@corp.example.com',
       agentId: 'agent-popo',
     },
     {
-      imConversationId: 'other-acc:direct:bjwangning@corp.netease.com',
+      imConversationId: 'other-acc:direct:zhangsan@corp.example.com',
       agentId: 'agent-other',
     },
-    { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}`, agentId: 'main' },
+    { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}`, agentId: 'main' },
   ];
 
   test('prefers the mapping owned by the preferred account', () => {
     expect(
       resolveConversationAgentIdFromMappings(
         mappings,
-        'bjwangning@corp.netease.com',
+        'zhangsan@corp.example.com',
         'other-acc',
       ),
     ).toBe('agent-other');
   });
 
+  test('prefers the selected account bound agent for account-less group mappings', () => {
+    expect(
+      resolveConversationAgentIdFromMappings(
+        [
+          { imConversationId: 'group:oc_1', agentId: 'main' },
+          { imConversationId: 'group:oc_1', agentId: 'agent-feishu-bot-1' },
+        ],
+        'group:oc_1',
+        'feishu-bot-1',
+        {
+          platform: 'feishu',
+          platformAgentBindings: {
+            'feishu:feishu-bot-1': 'agent-feishu-bot-1',
+          },
+        },
+      ),
+    ).toBe('agent-feishu-bot-1');
+  });
+
   test('falls back to the most recent peer match and accepts full conversation ids', () => {
     expect(
-      resolveConversationAgentIdFromMappings(mappings, 'bjwangning@corp.netease.com'),
+      resolveConversationAgentIdFromMappings(mappings, 'zhangsan@corp.example.com'),
     ).toBe('agent-popo');
     expect(
       resolveConversationAgentIdFromMappings(
         mappings,
-        'f1591db9:direct:bjwangning@corp.netease.com',
+        'popo-bot-1:direct:zhangsan@corp.example.com',
       ),
     ).toBe('agent-popo');
     // Case-insensitive: delivery targets keep the channel-native casing.
@@ -143,7 +162,7 @@ describe('resolveConversationAgentIdFromMappings', () => {
   });
 
   test('returns null for unknown peers or mappings without an agent', () => {
-    expect(resolveConversationAgentIdFromMappings(mappings, 'nobody@corp.netease.com')).toBe(
+    expect(resolveConversationAgentIdFromMappings(mappings, 'lisi@corp.example.com')).toBe(
       null,
     );
     expect(
@@ -158,22 +177,22 @@ describe('resolveConversationAgentIdFromMappings', () => {
 describe('dedupeConversationMappings', () => {
   test('keeps the most recent mapping per peer across account prefixes', () => {
     const result = dedupeConversationMappings([
-      { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}` },
-      { imConversationId: `689a50fe5798-im-bot:direct:${LOWER_PEER}` },
+      { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}` },
+      { imConversationId: `weixin-bot-2:direct:${LOWER_PEER}` },
       { imConversationId: `direct:${LOWER_PEER}` },
     ]);
     expect(result).toEqual([
-      { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}` },
+      { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}` },
     ]);
   });
 
   test('drops heartbeat pseudo-conversations', () => {
     const result = dedupeConversationMappings([
-      { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}:heartbeat` },
-      { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}` },
+      { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}:heartbeat` },
+      { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}` },
     ]);
     expect(result).toEqual([
-      { imConversationId: `91fcaf18cb3a-im-bot:direct:${LOWER_PEER}` },
+      { imConversationId: `weixin-bot-1:direct:${LOWER_PEER}` },
     ]);
   });
 
@@ -204,30 +223,30 @@ describe('filterConversationMappingsForSelectedAccount', () => {
     const result = filterConversationMappingsForSelectedAccount(
       [
         {
-          imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+          imConversationId: 'group:oc_zhangsan_group',
           agentId: 'main',
         },
         {
-          imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+          imConversationId: 'group:oc_zhangsan_group',
           agentId: 'agent-feishu-bot-1',
         },
         {
-          imConversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+          imConversationId: 'feishu-bot-1:direct:ou_lisi',
           agentId: 'agent-feishu-bot-1',
         },
       ],
       'feishu',
-      '61823a93',
-      { 'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-feishu-bot-1' },
+      'feishu-bot-1',
+      { 'feishu:feishu-bot-1': 'agent-feishu-bot-1' },
     );
 
     expect(result).toEqual([
       {
-        imConversationId: 'group:oc_622a147f6d49851fb81e138022fcb485',
+        imConversationId: 'group:oc_zhangsan_group',
         agentId: 'agent-feishu-bot-1',
       },
       {
-        imConversationId: '61823a93:direct:ou_30660c6d4aaeade046cc31c9a95d747f',
+        imConversationId: 'feishu-bot-1:direct:ou_lisi',
         agentId: 'agent-feishu-bot-1',
       },
     ]);
@@ -241,7 +260,7 @@ describe('filterConversationMappingsForSelectedAccount', () => {
 
     expect(
       filterConversationMappingsForSelectedAccount(mappings, 'feishu', undefined, {
-        'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-2',
+        'feishu:feishu-bot-1': 'agent-2',
       }),
     ).toEqual(mappings);
   });
@@ -267,8 +286,8 @@ describe('filterConversationMappingsForSelectedAccount', () => {
         { imConversationId: 'group:oc_2', agentId: 'agent-other' },
       ],
       'feishu',
-      '61823a93',
-      { 'feishu:61823a93-ba68-4cdf-81fd-ddd70311ca7f': 'agent-feishu-bot-1' },
+      'feishu-bot-1',
+      { 'feishu:feishu-bot-1': 'agent-feishu-bot-1' },
     );
 
     expect(result).toEqual([]);

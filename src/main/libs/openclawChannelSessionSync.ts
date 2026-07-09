@@ -675,7 +675,17 @@ export class OpenClawChannelSessionSync {
     const peer = parseImConversationId(to).peerId.trim().toLowerCase();
     if (!peer) return null;
 
-    // Mappings are sorted by lastActiveAt DESC; the first match wins.
+    const imSettings = (this.imStore as {
+      getIMSettings?: () => { platformAgentBindings?: Record<string, string> };
+    }).getIMSettings?.();
+    const preferredAgentId = accountId
+      ? resolveAgentBinding(imSettings?.platformAgentBindings, platform, accountId)
+      : null;
+    let fallback: { sessionId: string; sessionKey: string } | null = null;
+
+    // Mappings are sorted by lastActiveAt DESC. Direct chats can match the
+    // account prefix directly; account-less groups need the current bot binding
+    // to disambiguate multiple agent-scoped mappings for the same group.
     for (const mapping of this.imStore.listSessionMappings(platform)) {
       const parsed = parseImConversationId(mapping.imConversationId);
       if (parsed.peerId.trim().toLowerCase() !== peer) continue;
@@ -683,9 +693,19 @@ export class OpenClawChannelSessionSync {
       const sessionKey = mapping.openClawSessionKey?.trim();
       if (!sessionKey) continue;
       if (!this.coworkStore.getSession(mapping.coworkSessionId)) continue;
-      return { sessionId: mapping.coworkSessionId, sessionKey };
+      const candidate = { sessionId: mapping.coworkSessionId, sessionKey };
+      if (accountId && parsed.accountId === accountId) return candidate;
+      if (
+        preferredAgentId &&
+        !parsed.accountId &&
+        parsed.peerKind === 'group' &&
+        mapping.agentId === preferredAgentId
+      ) {
+        return candidate;
+      }
+      fallback = fallback ?? candidate;
     }
-    return null;
+    return fallback;
   }
 
   getOpenClawSessionKeyForCoworkSession(sessionId: string): {

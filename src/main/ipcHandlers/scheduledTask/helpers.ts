@@ -218,10 +218,21 @@ export function resolveConversationAgentIdFromMappings(
   mappings: ReadonlyArray<{ imConversationId: string; agentId?: string }>,
   to: string,
   preferredAccountId?: string,
+  options?: {
+    platform?: Platform;
+    platformAgentBindings?: Record<string, string>;
+  },
 ): string | null {
   const peer = parseImConversationId(to).peerId.trim().toLowerCase();
   if (!peer) return null;
 
+  const preferredAgentId = preferredAccountId && options?.platform
+    ? resolveAgentBinding(
+      options.platformAgentBindings,
+      options.platform,
+      preferredAccountId,
+    )
+    : null;
   let firstMatch: string | null = null;
   for (const mapping of mappings) {
     const parsed = parseImConversationId(mapping.imConversationId);
@@ -229,6 +240,14 @@ export function resolveConversationAgentIdFromMappings(
     const agentId = mapping.agentId?.trim();
     if (!agentId) continue;
     if (preferredAccountId && parsed.accountId === preferredAccountId) return agentId;
+    if (
+      preferredAgentId &&
+      !parsed.accountId &&
+      parsed.peerKind === 'group' &&
+      agentId === preferredAgentId
+    ) {
+      return agentId;
+    }
     firstMatch = firstMatch ?? agentId;
   }
   return firstMatch;
