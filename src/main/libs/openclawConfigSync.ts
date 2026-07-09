@@ -91,6 +91,7 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
 export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
+const OPENCLAW_MEMORY_CORE_PLUGIN_ID = 'memory-core';
 export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 const OPENCLAW_DEFAULT_MODEL_MAX_TOKENS = 8192;
 const CHROME_PROXY_SERVER_ARG_PREFIX = '--proxy-server=';
@@ -2009,6 +2010,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const trustedPluginAllow = Array.from(new Set([
           ...existingAllow,
           BUNDLED_BROWSER_PLUGIN_ID,
+          OPENCLAW_MEMORY_CORE_PLUGIN_ID,
           // A non-empty plugins.allow is a strict allowlist in OpenClaw
           // (manifest-owner-policy "not-in-allowlist"), so runtime-bundled
           // plugins we rely on must be listed here explicitly or they never
@@ -2042,6 +2044,10 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 // a removed plugin causes "Config invalid: plugin not found" errors.
                 allow: trustedPluginAllow,
                 deny: [],
+                slots: {
+                  ...((existingPlugins as Record<string, unknown>).slots as Record<string, unknown> | undefined),
+                  memory: OPENCLAW_MEMORY_CORE_PLUGIN_ID,
+                },
                 entries: pluginEntries,
               },
             }
@@ -2092,11 +2098,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     if (managedConfig.plugins) {
       const plugins = managedConfig.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
-      const existingMemoryCore = entries['memory-core'] ?? {};
+      const existingMemoryCore = entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] ?? {};
       const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
       if (coworkConfig.dreamingEnabled) {
-        entries['memory-core'] = {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
+          enabled: true,
           config: {
             ...existingMemoryCoreConfig,
             dreaming: {
@@ -2105,12 +2112,16 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             },
           },
         };
-      } else if (existingMemoryCoreConfig?.dreaming) {
-        // Remove dreaming config when disabled
-        const { dreaming: _, ...restConfig } = existingMemoryCoreConfig;
-        entries['memory-core'] = {
+      } else {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
-          config: Object.keys(restConfig).length > 0 ? restConfig : undefined,
+          enabled: true,
+          config: {
+            ...existingMemoryCoreConfig,
+            dreaming: {
+              enabled: false,
+            },
+          },
         };
       }
     }
