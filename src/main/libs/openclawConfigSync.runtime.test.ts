@@ -1202,6 +1202,97 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.plugins.allow).toContain('xai');
   });
 
+  test('keeps memory-core selected and explicitly disables dreaming when dreaming is off', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      plugins: {
+        entries: {
+          'memory-core': {
+            enabled: true,
+            config: {
+              retention: {
+                shortTermDays: 14,
+              },
+              dreaming: {
+                enabled: true,
+                frequency: '0 3 * * *',
+              },
+            },
+          },
+        },
+      },
+    }, null, 2));
+
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+        dreamingEnabled: false,
+        dreamingFrequency: '0 3 * * *',
+      }),
+    });
+
+    const result = sync.sync('dreaming-disabled-cleanup');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.slots.memory).toBe('memory-core');
+    expect(config.plugins.allow).toContain('memory-core');
+    expect(config.plugins.entries['memory-core']).toEqual({
+      enabled: true,
+      config: {
+        retention: {
+          shortTermDays: 14,
+        },
+        dreaming: {
+          enabled: false,
+        },
+      },
+    });
+  });
+
+  test('writes enabled memory-core dreaming config when dreaming is on', async () => {
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+        dreamingEnabled: true,
+        dreamingFrequency: '0 4 * * *',
+      }),
+    });
+
+    const result = sync.sync('dreaming-enabled');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.slots.memory).toBe('memory-core');
+    expect(config.plugins.allow).toContain('memory-core');
+    expect(config.plugins.entries['memory-core']).toEqual({
+      enabled: true,
+      config: {
+        dreaming: {
+          enabled: true,
+          frequency: '0 4 * * *',
+        },
+      },
+    });
+  });
+
   test('maps OpenAI OAuth mode to the ChatGPT Responses provider', async () => {
     const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
