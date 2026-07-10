@@ -4,5 +4,5 @@
 // and retrieved-evidence bridges. Strip it at ingestion and outbound
 // boundaries; other control characters are stripped by the gateway itself.
 export const stripNullChars = (value: string): string => (
-  value.includes('\u0000') ? value.replaceAll('\u0000', '') : value
+  value.includes('\u0000') ? value.replace(/\u0000/g, '') : value
 );
