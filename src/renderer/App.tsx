@@ -26,6 +26,7 @@ import Sidebar from './components/Sidebar';
 import { SkillsView } from './components/skills';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
+import AppUpdateCard from './components/update/AppUpdateCard';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
 import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
@@ -107,6 +108,7 @@ const App: React.FC = () => {
     errorMessage: null,
   });
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [isUpdateCardExpanded, setIsUpdateCardExpanded] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
@@ -541,7 +543,9 @@ const App: React.FC = () => {
 
     if (appUpdateState.status === AppUpdateStatus.Error || appUpdateState.status === AppUpdateStatus.Available) {
       if (!isManualDownloadUrl(updateInfo.url)) {
-        shouldInstallReadyUpdateRef.current = appUpdateState.status === AppUpdateStatus.Available;
+        // The user explicitly asked to update (or retry), so finish the whole
+        // flow in one click: install and restart as soon as the download lands.
+        shouldInstallReadyUpdateRef.current = true;
         const retryResult = await window.electron.appUpdate.retryDownload();
         if (!retryResult.success) {
           shouldInstallReadyUpdateRef.current = false;
@@ -956,9 +960,10 @@ const App: React.FC = () => {
     };
   }, [isInitialized, runUpdateCheck, enterpriseConfig]);
 
-  // 根据场景选择使用哪个权限组件
+  // 根据场景选择使用哪个权限组件。最小化时保持组件挂载（仅视觉隐藏），
+  // 避免重新展开后丢失用户已选择/已输入的内容；key 按 requestId 隔离不同请求的状态。
   const permissionModal = useMemo(() => {
-    if (!pendingPermission || isPendingPermissionMinimized) return null;
+    if (!pendingPermission) return null;
 
     // 检查是否为 AskUserQuestion 且有多个问题 -> 使用向导式组件
     const isQuestionTool = pendingPermission.toolName === 'AskUserQuestion';
@@ -969,9 +974,11 @@ const App: React.FC = () => {
       if (hasMultipleQuestions) {
         return (
           <CoworkQuestionWizard
+            key={pendingPermission.requestId}
             permission={pendingPermission}
             onRespond={handlePermissionResponse}
             onMinimize={handleMinimizePermission}
+            hidden={isPendingPermissionMinimized}
           />
         );
       }
@@ -980,23 +987,34 @@ const App: React.FC = () => {
     // 其他情况使用原有的权限模态框
     return (
       <CoworkPermissionModal
+        key={pendingPermission.requestId}
         permission={pendingPermission}
         onRespond={handlePermissionResponse}
         onMinimize={handleMinimizePermission}
+        hidden={isPendingPermissionMinimized}
       />
     );
   }, [pendingPermission, handlePermissionResponse, handleMinimizePermission, isPendingPermissionMinimized]);
 
   const isOverlayActive = showSettings || showUpdateModal || isPermissionModalOpen;
-  const shouldShowUpdateBadge =
-    updateInfo &&
-    appUpdateState.status !== AppUpdateStatus.Checking &&
-    appUpdateState.status !== AppUpdateStatus.Downloading;
+  // Keep the badge visible while downloading so the collapsed-sidebar layouts
+  // still surface progress; only a plain re-check hides nothing new.
+  const shouldShowUpdateBadge = updateInfo && appUpdateState.status !== AppUpdateStatus.Checking;
   const updateBadge = shouldShowUpdateBadge ? (
     <AppUpdateBadge
       latestVersion={updateInfo.latestVersion}
       status={appUpdateState.status}
+      progress={appUpdateState.progress?.percent}
       onClick={handleOpenUpdateModal}
+    />
+  ) : null;
+  const updateCard = updateInfo ? (
+    <AppUpdateCard
+      updateState={appUpdateState}
+      onUpdate={handleConfirmUpdate}
+      onShowDetails={handleOpenUpdateModal}
+      onCancelDownload={handleCancelDownload}
+      onExpandedChange={setIsUpdateCardExpanded}
     />
   ) : null;
   const canUseWindowsTopBarActions = isInitialized && !initError;
@@ -1088,7 +1106,8 @@ const App: React.FC = () => {
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
           onWidthChange={setSidebarWidth}
-          updateBadge={!isSidebarCollapsed ? updateBadge : null}
+          updateNotice={!isSidebarCollapsed ? updateCard : null}
+          hideAdBanner={isUpdateCardExpanded}
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
         <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
