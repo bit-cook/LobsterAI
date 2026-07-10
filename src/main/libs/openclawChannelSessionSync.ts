@@ -7,13 +7,14 @@
 
 import { DeliveryMode as ScheduledTaskDeliveryMode } from '../../scheduledTask/constants';
 import type { ScheduledTaskJobDelivery } from '../../scheduledTask/cronJobService';
-import { ImPeerKind, parseImConversationId, PlatformRegistry } from '../../shared/platform';
+import { parseImConversationId, PlatformRegistry } from '../../shared/platform';
 import type { CoworkSession, CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
 import type { IMStore } from '../im/imStore';
-import type { IMSessionMapping, Platform } from '../im/types';
+import type { Platform } from '../im/types';
 
 const LOBSTERAI_SESSION_PREFIX = 'lobsterai:';
+const FEISHU_GROUP_CHAT_ID_RE = /^oc_/i;
 export const DEFAULT_MANAGED_AGENT_ID = 'main';
 
 export interface ManagedSessionKey {
@@ -413,43 +414,6 @@ export class OpenClawChannelSessionSync {
     return this.imStore.getSessionMapping(parsed.conversationId, parsed.platform, agentId);
   }
 
-  private getAccountlessGroupMappingForDirectMirror(
-    parsed: { platform: Platform; conversationId: string },
-    agentId: string,
-  ): IMSessionMapping | null {
-    const incoming = parseImConversationId(parsed.conversationId);
-    if (incoming.peerKind !== ImPeerKind.Direct) return null;
-
-    const peer = incoming.peerId.trim().toLowerCase();
-    if (!peer) return null;
-
-    for (const mapping of this.imStore.listSessionMappings(parsed.platform)) {
-      if (mapping.agentId !== agentId) continue;
-
-      const mapped = parseImConversationId(mapping.imConversationId);
-      if (mapped.accountId) continue;
-      if (
-        mapped.peerKind !== ImPeerKind.Group &&
-        mapped.peerKind !== ImPeerKind.Channel
-      ) {
-        continue;
-      }
-      if (mapped.peerId.trim().toLowerCase() !== peer) continue;
-
-      console.debug(
-        '[ChannelSessionSync] reusing accountless group/channel mapping for direct-shaped delivery mirror:',
-        parsed.conversationId,
-        '->',
-        mapping.imConversationId,
-        'agentId=',
-        agentId,
-      );
-      return mapping;
-    }
-
-    return null;
-  }
-
   private createChannelSession(
     parsed: { platform: Platform; conversationId: string },
     agentId: string,
@@ -547,10 +511,6 @@ export class OpenClawChannelSessionSync {
       if (legacyMapping?.agentId === agentId) {
         existingMapping = legacyMapping;
       }
-    }
-    const mirroredGroupMapping = this.getAccountlessGroupMappingForDirectMirror(parsed, agentId);
-    if (mirroredGroupMapping) {
-      existingMapping = mirroredGroupMapping;
     }
     console.log(
       '[ChannelSessionSync] existing mapping:',
@@ -684,10 +644,6 @@ export class OpenClawChannelSessionSync {
         existingMapping = legacyMapping;
       }
     }
-    const mirroredGroupMapping = this.getAccountlessGroupMappingForDirectMirror(parsed, agentId);
-    if (mirroredGroupMapping) {
-      existingMapping = mirroredGroupMapping;
-    }
     if (existingMapping) {
       const session = this.coworkStore.getSession(existingMapping.coworkSessionId);
       if (session) {
@@ -765,6 +721,51 @@ export class OpenClawChannelSessionSync {
       fallback = fallback ?? candidate;
     }
     return fallback;
+  }
+
+  /**
+   * Resolve the OpenClaw conversation that receives an outbound delivery
+   * mirror. Feishu's current cron route sends a native `oc_...` group target
+   * successfully but mirrors it into an account-scoped direct session. Keep
+   * that runtime-specific route separate from canonical group ownership used
+   * by scheduled-task target selection.
+   */
+  resolveOrCreateConversationForDeliveryMirror(
+    channel: string,
+    to: string,
+    accountId?: string,
+    agentId?: string,
+  ): { sessionId: string; sessionKey: string } | null {
+    const platform = PlatformRegistry.platformOfChannel(channel);
+    if (!platform) return null;
+
+    const peerId = parseImConversationId(to).peerId.trim();
+    if (!peerId) return null;
+
+    const normalizedAccountId = accountId?.trim();
+    if (platform === 'feishu' && normalizedAccountId && FEISHU_GROUP_CHAT_ID_RE.test(peerId)) {
+      const imSettings = (this.imStore as {
+        getIMSettings?: () => { platformAgentBindings?: Record<string, string> };
+      }).getIMSettings?.();
+      const mirrorAgentId = agentId?.trim()
+        || resolveAgentBinding(
+          imSettings?.platformAgentBindings,
+          platform,
+          normalizedAccountId,
+        );
+      const sessionKey = [
+        'agent',
+        mirrorAgentId,
+        PlatformRegistry.channelOf(platform),
+        normalizedAccountId,
+        'direct',
+        peerId,
+      ].join(':');
+      const sessionId = this.resolveOrCreateSession(sessionKey);
+      return sessionId ? { sessionId, sessionKey } : null;
+    }
+
+    return this.resolveConversationByDeliveryTarget(channel, peerId, normalizedAccountId);
   }
 
   getOpenClawSessionKeyForCoworkSession(sessionId: string): {

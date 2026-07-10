@@ -3816,6 +3816,58 @@ test('late lifecycle fallback event does not reopen a completed managed session'
   expect(adapter.sessionIdByRunId.has('late-run')).toBe(false);
 });
 
+test('delivered cron event syncs the resolved delivery mirror conversation', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const mirrorSessionKey =
+      'agent:agent-feishu-bot-1:feishu:feishu-bot-1:direct:oc_zhangsan_group';
+    const resolveMirrorConversation = vi.fn(() => ({
+      sessionId: session.id,
+      sessionKey: mirrorSessionKey,
+    }));
+    const syncSessionHistory = vi.fn().mockResolvedValue(undefined);
+
+    adapter.channelSessionSync = {
+      resolveOrCreateConversationForDeliveryMirror: resolveMirrorConversation,
+    } as never;
+    adapter.syncSessionHistoryFromGateway = syncSessionHistory;
+
+    adapter.handleGatewayEvent({
+      event: 'cron',
+      payload: {
+        action: 'finished',
+        delivered: true,
+        job: { agentId: 'agent-feishu-bot-1' },
+        sessionKey: 'agent:agent-feishu-bot-1:cron:job-1:run:run-1',
+        delivery: {
+          delivered: true,
+          resolved: {
+            channel: 'feishu',
+            to: 'oc_zhangsan_group',
+            accountId: 'feishu-bot-1',
+          },
+        },
+      },
+    });
+
+    expect(resolveMirrorConversation).toHaveBeenCalledWith(
+      'feishu',
+      'oc_zhangsan_group',
+      'feishu-bot-1',
+      'agent-feishu-bot-1',
+    );
+    expect(syncSessionHistory).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(syncSessionHistory).toHaveBeenCalledWith(session.id, mirrorSessionKey);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('late event for a closed run does not recreate a managed session turn', () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },

@@ -280,23 +280,34 @@ test('channel sync resolves account-less group delivery target by selected bot b
   });
 });
 
-test('channel sync reuses an existing account-less group for direct-shaped delivery mirrors', () => {
-  const createSession = vi.fn(() => {
-    throw new Error('createSession should not be called in this test');
-  });
+test('channel sync resolves Feishu group delivery mirrors as separate direct conversations', () => {
+  const createSession = vi.fn((
+    title: string,
+    cwd: string,
+    systemPrompt: string,
+    executionMode: 'local',
+    activeSkillIds: string[],
+    agentId: string,
+  ) => ({
+    id: 'feishu-mirror-direct',
+    title,
+    claudeSessionId: null,
+    status: 'idle' as const,
+    pinned: false,
+    cwd,
+    systemPrompt,
+    modelOverride: '',
+    executionMode,
+    activeSkillIds,
+    agentId,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }));
+  const createSessionMapping = vi.fn();
   const updateSessionOpenClawSessionKey = vi.fn();
   const updateSessionLastActive = vi.fn();
   const mappings = [
-    {
-      imConversationId: 'feishu-bot-1:direct:oc_zhangsan_group',
-      platform: 'feishu',
-      coworkSessionId: 'feishu-poisoned-direct',
-      agentId: 'agent-feishu-bot-1',
-      openClawSessionKey:
-        'agent:agent-feishu-bot-1:feishu:feishu-bot-1:direct:oc_zhangsan_group',
-      createdAt: 1,
-      lastActiveAt: 3,
-    },
     {
       imConversationId: 'group:oc_zhangsan_group',
       platform: 'feishu',
@@ -325,25 +336,83 @@ test('channel sync reuses an existing account-less group for direct-shaped deliv
       updateSessionOpenClawSessionKey,
       updateSessionLastActive,
       deleteSessionMapping: () => {},
-      createSessionMapping: () => {},
+      createSessionMapping,
       listSessionMappings: (platform: string) =>
         mappings.filter(m => m.platform === platform),
+    },
+    getDefaultCwd: () => '/tmp/agent-feishu-bot-1',
+  });
+
+  const directMirrorKey = 'agent:agent-feishu-bot-1:feishu:feishu-bot-1:direct:oc_zhangsan_group';
+  expect(
+    sync.resolveOrCreateConversationForDeliveryMirror(
+      'feishu',
+      'oc_zhangsan_group',
+      'feishu-bot-1',
+      'agent-feishu-bot-1',
+    ),
+  ).toEqual({
+    sessionId: 'feishu-mirror-direct',
+    sessionKey: directMirrorKey,
+  });
+  expect(createSession).toHaveBeenCalledWith(
+    expect.any(String),
+    '/tmp/agent-feishu-bot-1',
+    '',
+    'local',
+    [],
+    'agent-feishu-bot-1',
+  );
+  expect(createSessionMapping).toHaveBeenCalledWith(
+    'feishu-bot-1:direct:oc_zhangsan_group',
+    'feishu',
+    'feishu-mirror-direct',
+    'agent-feishu-bot-1',
+    directMirrorKey,
+  );
+  expect(updateSessionOpenClawSessionKey).not.toHaveBeenCalled();
+  expect(updateSessionLastActive).not.toHaveBeenCalled();
+});
+
+test('channel sync keeps non-Feishu delivery mirror resolution unchanged', () => {
+  const sync = new OpenClawChannelSessionSync({
+    coworkStore: {
+      getSession: (id: string) => (id === 'weixin-live' ? { id } : null),
+      createSession: () => {
+        throw new Error('createSession should not be called in this test');
+      },
+    },
+    imStore: {
+      getSessionMapping: () => null,
+      updateSessionLastActive: () => {},
+      deleteSessionMapping: () => {},
+      createSessionMapping: () => {},
+      listSessionMappings: () => [{
+        imConversationId: 'weixin-bot-1:direct:wxid_zhangsan@im.wechat',
+        platform: 'weixin',
+        coworkSessionId: 'weixin-live',
+        agentId: 'main',
+        openClawSessionKey:
+          'agent:main:openclaw-weixin:weixin-bot-1:direct:wxid_zhangsan@im.wechat',
+        createdAt: 1,
+        lastActiveAt: 1,
+      }],
     },
     getDefaultCwd: () => '/tmp',
   });
 
   expect(
-    sync.resolveOrCreateSession(
-      'agent:agent-feishu-bot-1:feishu:feishu-bot-1:direct:oc_zhangsan_group',
+    sync.resolveOrCreateConversationForDeliveryMirror(
+      'openclaw-weixin',
+      'WxId_ZhangSan@im.wechat',
+      'weixin-bot-1',
+      'main',
     ),
-  ).toBe('feishu-bound-group');
-  expect(createSession).not.toHaveBeenCalled();
-  expect(updateSessionOpenClawSessionKey).not.toHaveBeenCalled();
-  expect(updateSessionLastActive).toHaveBeenCalledWith(
-    'group:oc_zhangsan_group',
-    'feishu',
-    'agent-feishu-bot-1',
-  );
+  ).toEqual({
+    sessionId: 'weixin-live',
+    sessionKey:
+      'agent:main:openclaw-weixin:weixin-bot-1:direct:wxid_zhangsan@im.wechat',
+  });
 });
 
 test('channel sync suppresses local cron sessions for IM-announce jobs', () => {
