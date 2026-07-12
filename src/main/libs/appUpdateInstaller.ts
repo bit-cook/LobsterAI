@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { app, session, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -246,25 +246,245 @@ export async function installUpdate(filePath: string): Promise<void> {
   throw new Error('Unsupported platform');
 }
 
+/** Prefix of explicit DMG mount point directories under userData/updates. */
+export const MAC_UPDATE_MOUNT_DIR_PREFIX = 'mnt-';
+
+const HDIUTIL_ATTACH_TIMEOUT_MS = 60_000;
+const HDIUTIL_DETACH_TIMEOUT_MS = 30_000;
+
+export interface HdiutilAttachParseResult {
+  mountPoint?: string;
+  devEntries: string[];
+}
+
+/**
+ * Parse `hdiutil attach -plist` output (converted to JSON). hdiutil exits 0
+ * even when the image attaches but the volume fails to mount; that case shows
+ * up as entities without any mount-point and is reported as data rather than
+ * an error. Entity order is not device order, so callers must not assume
+ * devEntries[0] is the root device.
+ */
+export function parseHdiutilAttachOutput(json: string): HdiutilAttachParseResult {
+  const devEntries: string[] = [];
+  let mountPoint: string | undefined;
+  try {
+    const data = JSON.parse(json) as { 'system-entities'?: unknown };
+    const entities = Array.isArray(data['system-entities']) ? data['system-entities'] : [];
+    for (const entity of entities) {
+      if (typeof entity !== 'object' || entity === null) {
+        continue;
+      }
+      const record = entity as Record<string, unknown>;
+      const dev = record['dev-entry'];
+      if (typeof dev === 'string' && dev) {
+        devEntries.push(dev);
+      }
+      const mp = record['mount-point'];
+      if (!mountPoint && typeof mp === 'string' && mp) {
+        mountPoint = mp;
+      }
+    }
+  } catch {
+    // Malformed output is handled by callers as "no mount point".
+  }
+  return { mountPoint, devEntries };
+}
+
+/**
+ * Extract the dev entries of an attached image from `hdiutil info -plist`
+ * output (converted to JSON), matched by image path.
+ */
+export function findAttachedDevEntries(json: string, imagePath: string): string[] {
+  try {
+    const data = JSON.parse(json) as { images?: unknown };
+    const images = Array.isArray(data.images) ? data.images : [];
+    for (const image of images) {
+      if (typeof image !== 'object' || image === null) {
+        continue;
+      }
+      const record = image as Record<string, unknown>;
+      if (record['image-path'] !== imagePath) {
+        continue;
+      }
+      const entities = Array.isArray(record['system-entities']) ? record['system-entities'] : [];
+      const devEntries: string[] = [];
+      for (const entity of entities) {
+        const dev =
+          typeof entity === 'object' && entity !== null
+            ? (entity as Record<string, unknown>)['dev-entry']
+            : undefined;
+        if (typeof dev === 'string' && dev) {
+          devEntries.push(dev);
+        }
+      }
+      if (devEntries.length) {
+        return devEntries;
+      }
+    }
+  } catch {
+    // Best-effort lookup for cleanup only.
+  }
+  return [];
+}
+
+function plistToJson(xml: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('plutil', ['-convert', 'json', '-o', '-', '-']);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`plutil exited with code ${code}: ${stderr.trim()}`));
+      }
+    });
+    // plutil may exit before consuming stdin; without a handler the EPIPE
+    // would crash the process instead of rejecting via 'close'.
+    child.stdin.on('error', () => {});
+    child.stdin.end(xml);
+  });
+}
+
+interface DmgAttachResult extends HdiutilAttachParseResult {
+  rawOutput: string;
+}
+
+async function attachDmg(dmgPath: string, explicitMountPoint?: string): Promise<DmgAttachResult> {
+  const mountPointArg = explicitMountPoint
+    ? ` -mountpoint ${shellEscape(explicitMountPoint)}`
+    : '';
+  const rawOutput = await execAsync(
+    `hdiutil attach ${shellEscape(dmgPath)} -nobrowse -noautoopen -noverify -plist${mountPointArg}`,
+    HDIUTIL_ATTACH_TIMEOUT_MS,
+  );
+  try {
+    const json = await plistToJson(rawOutput);
+    return { ...parseHdiutilAttachOutput(json), rawOutput };
+  } catch (error) {
+    console.error('[AppUpdate] failed to convert hdiutil attach output to JSON:', error);
+    return { devEntries: [], rawOutput };
+  }
+}
+
+/** Detaching any device of an image tears down the whole attachment, so stop at the first success. */
+async function detachDevEntriesBestEffort(devEntries: string[]): Promise<boolean> {
+  for (const dev of devEntries) {
+    try {
+      await execAsync(`hdiutil detach ${shellEscape(dev)} -force`, HDIUTIL_DETACH_TIMEOUT_MS);
+      return true;
+    } catch {
+      // The device may already be gone; try the next entry.
+    }
+  }
+  return false;
+}
+
+/**
+ * Detach a leftover attachment of this DMG. A stale attachment makes every
+ * subsequent `hdiutil attach` return the attached-but-unmounted device table
+ * in ~100ms, so retries would fail forever without this cleanup.
+ */
+async function cleanupStaleAttachment(dmgPath: string, knownDevEntries: string[]): Promise<void> {
+  let devEntries = knownDevEntries;
+  if (!devEntries.length) {
+    try {
+      const infoXml = await execAsync('hdiutil info -plist', HDIUTIL_ATTACH_TIMEOUT_MS);
+      devEntries = findAttachedDevEntries(await plistToJson(infoXml), dmgPath);
+    } catch (error) {
+      console.warn('[AppUpdate] failed to inspect attached images:', error);
+    }
+  }
+  if (!devEntries.length) {
+    console.warn('[AppUpdate] no attached devices found for the DMG, nothing to detach');
+    return;
+  }
+  if (await detachDevEntriesBestEffort(devEntries)) {
+    console.log(`[AppUpdate] detached stale image attachment (${devEntries.join(', ')})`);
+  } else {
+    console.warn(`[AppUpdate] failed to detach stale image attachment (${devEntries.join(', ')})`);
+  }
+}
+
+/**
+ * Hand the DMG to Finder as a last resort. When mounting is blocked
+ * system-wide (security tooling, broken /Volumes permissions), Finder
+ * surfaces the real system error to the user, which the hidden hdiutil path
+ * never can.
+ */
+async function openDmgForManualInstall(dmgPath: string): Promise<void> {
+  try {
+    const openError = await shell.openPath(dmgPath);
+    if (openError) {
+      console.warn(`[AppUpdate] failed to open DMG in Finder: ${openError}`);
+      shell.showItemInFolder(dmgPath);
+    }
+  } catch (error) {
+    console.warn('[AppUpdate] failed to reveal DMG for manual install:', error);
+  }
+}
+
+async function removeMountDirBestEffort(dir: string | null): Promise<void> {
+  if (!dir) {
+    return;
+  }
+  // rmdir, not rm -rf: if the volume is still mounted here the directory is
+  // busy/non-empty and removal fails, which is the safe outcome.
+  await fs.promises.rmdir(dir).catch(() => {});
+}
+
 async function installMacDmg(dmgPath: string): Promise<void> {
   let mountPoint: string | null = null;
+  let attachedDevEntries: string[] = [];
+  let explicitMountDir: string | null = null;
 
   try {
-    // Mount the DMG (timeout 60s)
     console.log('[AppUpdate] Mounting DMG...');
-    const mountOutput = await execAsync(
-      `hdiutil attach ${shellEscape(dmgPath)} -nobrowse -noautoopen -noverify`,
-      60_000,
-    );
+    let attach = await attachDmg(dmgPath);
+    attachedDevEntries = attach.devEntries;
 
-    // Parse mount point from output (last line, last column)
-    const lines = mountOutput.split('\n').filter((l) => l.trim());
-    const lastLine = lines[lines.length - 1];
-    const mountMatch = lastLine?.match(/\t(\/Volumes\/.+)$/);
-    if (!mountMatch) {
-      throw new Error('Failed to determine mount point from hdiutil output');
+    if (!attach.mountPoint) {
+      // Attached but the volume never mounted (hdiutil still exits 0): either
+      // DiskArbitration is blocked on this machine or a previous failed
+      // install left a stale attachment. Clean up and retry once with an
+      // explicit mount point outside /Volumes.
+      console.error(
+        `[AppUpdate] hdiutil attach returned no mount point (devices: ${attachedDevEntries.join(', ') || 'none'}), raw output:\n${attach.rawOutput}`,
+      );
+      await cleanupStaleAttachment(dmgPath, attachedDevEntries);
+      attachedDevEntries = [];
+
+      explicitMountDir = path.join(
+        app.getPath('userData'),
+        'updates',
+        `${MAC_UPDATE_MOUNT_DIR_PREFIX}${Date.now()}`,
+      );
+      await fs.promises.mkdir(explicitMountDir, { recursive: true });
+      console.log(`[AppUpdate] Retrying attach with explicit mount point: ${explicitMountDir}`);
+      attach = await attachDmg(dmgPath, explicitMountDir);
+      attachedDevEntries = attach.devEntries;
+
+      if (!attach.mountPoint) {
+        console.error(
+          `[AppUpdate] retry attach still returned no mount point, raw output:\n${attach.rawOutput}`,
+        );
+        await openDmgForManualInstall(dmgPath);
+        throw new Error(
+          'Failed to determine mount point from hdiutil output (volume mount failed)',
+        );
+      }
     }
-    mountPoint = mountMatch[1];
+
+    mountPoint = attach.mountPoint;
     console.log(`[AppUpdate] Mounted at: ${mountPoint}`);
 
     // Find .app bundle in mount point
@@ -320,11 +540,14 @@ async function installMacDmg(dmgPath: string): Promise<void> {
 
     // Detach DMG (timeout 30s)
     try {
-      await execAsync(`hdiutil detach ${shellEscape(mountPoint)} -force`, 30_000);
+      await execAsync(`hdiutil detach ${shellEscape(mountPoint)} -force`, HDIUTIL_DETACH_TIMEOUT_MS);
     } catch {
       // Best effort
     }
     mountPoint = null;
+    attachedDevEntries = [];
+    await removeMountDirBestEffort(explicitMountDir);
+    explicitMountDir = null;
 
     // Clean up downloaded DMG
     try {
@@ -348,14 +571,20 @@ async function installMacDmg(dmgPath: string): Promise<void> {
     app.quit();
   } catch (error) {
     console.error('[AppUpdate] macOS install error:', error);
-    // Clean up mount point on error
+    // Never leave the image attached on failure: a stale attachment poisons
+    // every retry (attach returns instantly with no mount point).
     if (mountPoint) {
       try {
-        await execAsync(`hdiutil detach ${shellEscape(mountPoint)} -force`, 30_000);
+        await execAsync(`hdiutil detach ${shellEscape(mountPoint)} -force`, HDIUTIL_DETACH_TIMEOUT_MS);
+        attachedDevEntries = [];
       } catch {
-        // Best effort
+        // Fall back to detaching by device entry below.
       }
     }
+    if (attachedDevEntries.length) {
+      await detachDevEntriesBestEffort(attachedDevEntries);
+    }
+    await removeMountDirBestEffort(explicitMountDir);
     throw error;
   }
 }
