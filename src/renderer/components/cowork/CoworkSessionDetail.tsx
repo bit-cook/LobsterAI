@@ -4185,7 +4185,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               {updateBadge}
             </div>
           )}
-          <h1 className="text-sm leading-none font-medium text-foreground truncate max-w-[360px]">
+          <h1 className="text-sm leading-5 font-medium text-foreground truncate max-w-[360px]">
             {getSessionTitleForDisplay(currentSession.title) || i18nService.t('coworkNewSession')}
           </h1>
         </div>
