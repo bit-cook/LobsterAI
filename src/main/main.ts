@@ -104,18 +104,17 @@ import { PlatformRegistry } from '../shared/platform';
 import { OpenClawProviderId, ProviderName } from '../shared/providers';
 import {
   ShareDeploymentCandidateSource,
-  type ShareDeploymentClearPersistenceInput,
   type ShareDeploymentCreateNodeInput,
   type ShareDeploymentDetectCandidatesInput,
   type ShareDeploymentDownloadPersistenceInput,
   type ShareDeploymentGetByLocalServiceInput,
-  type ShareDeploymentImportPersistenceInput,
   ShareDeploymentIpc,
   ShareDeploymentKind,
   ShareDeploymentPackageManager,
   type ShareDeploymentPersistence,
   ShareDeploymentPersistenceBindingKind,
   ShareDeploymentPersistenceProvider,
+  ShareDeploymentPersistenceUpdateMode,
   type ShareDeploymentProjectCandidate,
   type ShareDeploymentSelectPersistencePathInput,
 } from '../shared/shareDeployment/constants';
@@ -301,12 +300,10 @@ import {
 import {
   buildNodeDeploymentClientSourceKey,
   buildStaticDeploymentClientSourceKey,
-  clearDeploymentPersistenceData,
   downloadDeploymentPersistenceArchive,
   getDeploymentPersistence,
   getNodeDeployment,
   getNodeDeploymentByLocalService,
-  importDeploymentPersistenceData,
   uploadNodeDeployment,
   uploadStaticDeployment,
 } from './libs/shareDeployment/shareDeploymentClient';
@@ -880,6 +877,18 @@ function sanitizeShareDeploymentPort(value: unknown): number {
   return port;
 }
 
+function sanitizeShareDeploymentPersistenceUpdateMode(
+  value: unknown,
+): ShareDeploymentPersistenceUpdateMode {
+  if (value === undefined || value === ShareDeploymentPersistenceUpdateMode.Preserve) {
+    return ShareDeploymentPersistenceUpdateMode.Preserve;
+  }
+  if (value === ShareDeploymentPersistenceUpdateMode.Replace) {
+    return ShareDeploymentPersistenceUpdateMode.Replace;
+  }
+  throw new Error('persistenceUpdateMode must be preserve or replace.');
+}
+
 function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeploymentCreateNodeInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Invalid node deployment request.');
@@ -898,6 +907,9 @@ function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeployment
     startCommand: sanitizeOptionalShareDeploymentCommand(source.startCommand, 'startCommand'),
     port: sanitizeShareDeploymentPort(source.port),
     persistence: sanitizeShareDeploymentPersistence(source.persistence),
+    persistenceUpdateMode: sanitizeShareDeploymentPersistenceUpdateMode(
+      source.persistenceUpdateMode,
+    ),
   };
 }
 
@@ -942,33 +954,6 @@ function sanitizeShareDeploymentDownloadPersistenceInput(
     deploymentId: sanitizeShareDeploymentPersistenceDeploymentIdInput(source.deploymentId),
     projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
     shareId: sanitizeOptionalHtmlShareString(source.shareId, 'shareId', 128),
-  };
-}
-
-function sanitizeShareDeploymentClearPersistenceInput(
-  input: unknown,
-): ShareDeploymentClearPersistenceInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid service data clear request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    deploymentId: sanitizeShareDeploymentPersistenceDeploymentIdInput(source.deploymentId),
-    confirmText: sanitizeHtmlShareString(source.confirmText, 'confirmText', 32),
-  };
-}
-
-function sanitizeShareDeploymentImportPersistenceInput(
-  input: unknown,
-): ShareDeploymentImportPersistenceInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Invalid service data import request.');
-  }
-  const source = input as Record<string, unknown>;
-  return {
-    deploymentId: sanitizeShareDeploymentPersistenceDeploymentIdInput(source.deploymentId),
-    archivePath: sanitizeHtmlShareString(source.archivePath, 'archivePath', 4096),
-    confirmText: sanitizeHtmlShareString(source.confirmText, 'confirmText', 32),
   };
 }
 
@@ -5839,6 +5824,7 @@ if (!gotTheLock) {
         buildCommand: options.buildCommand,
         startCommand: options.startCommand,
         port: options.port,
+        persistence: options.persistence,
       });
       archivePath = packaged.archivePath;
       const analysis = options.persistence
@@ -5960,40 +5946,6 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to download service data',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.ClearPersistenceData, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentClearPersistenceInput(input);
-      return await clearDeploymentPersistenceData(
-        getServerApiBaseUrl(),
-        fetchWithAuth,
-        options,
-      );
-    } catch (error) {
-      console.error('[ShareDeployment] failed to clear service data:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to clear service data',
-      };
-    }
-  });
-
-  ipcMain.handle(ShareDeploymentIpc.ImportPersistenceData, async (_event, input: unknown) => {
-    try {
-      const options = sanitizeShareDeploymentImportPersistenceInput(input);
-      return await importDeploymentPersistenceData(
-        getServerApiBaseUrl(),
-        fetchWithAuth,
-        options,
-      );
-    } catch (error) {
-      console.error('[ShareDeployment] failed to import service data:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to import service data',
       };
     }
   });

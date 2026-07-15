@@ -555,7 +555,6 @@ async function collectPackageEntries(
 ): Promise<NodeServicePackageCollection> {
   const entries: NodeServicePackageEntry[] = [];
   const persistenceCandidates = new Map<string, PersistenceCandidate>();
-  const warnings: string[] = [];
   const blockers: string[] = [];
   let totalBytes = 0;
   let excludedCount = 0;
@@ -634,10 +633,6 @@ async function collectPackageEntries(
 
   await walk(projectDirectory);
 
-  if (excludedCount > 0) {
-    warnings.push(`${excludedCount} files or directories will be excluded from the deployment package.`);
-  }
-
   const persistenceBindings = Array.from(persistenceCandidates.values())
     .sort((a, b) => a.appPath.localeCompare(b.appPath))
     .map(candidate => ({
@@ -659,7 +654,7 @@ async function collectPackageEntries(
           bindings: persistenceBindings,
         }
       : undefined,
-    warnings,
+    warnings: [],
     blockers,
   };
 }
@@ -678,7 +673,6 @@ export async function collectStaticSiteDeploymentPackageEntries(
   projectDirectory: string,
 ): Promise<NodeServicePackageCollection> {
   const entries: NodeServicePackageEntry[] = [];
-  const warnings: string[] = [];
   const blockers: string[] = [];
   let totalBytes = 0;
   let excludedCount = 0;
@@ -737,15 +731,11 @@ export async function collectStaticSiteDeploymentPackageEntries(
 
   await walk(projectDirectory);
 
-  if (excludedCount > 0) {
-    warnings.push(`${excludedCount} files or directories will be excluded from the static deployment package.`);
-  }
-
   return {
     entries: entries.sort((a, b) => a.archiveName.localeCompare(b.archiveName)),
     totalBytes,
     excludedCount,
-    warnings,
+    warnings: [],
     blockers,
   };
 }

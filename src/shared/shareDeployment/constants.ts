@@ -13,8 +13,6 @@ export const ShareDeploymentIpc = {
   GetByLocalService: 'shareDeployment:getByLocalService',
   GetPersistence: 'shareDeployment:getPersistence',
   DownloadPersistenceArchive: 'shareDeployment:downloadPersistenceArchive',
-  ClearPersistenceData: 'shareDeployment:clearPersistenceData',
-  ImportPersistenceData: 'shareDeployment:importPersistenceData',
 } as const;
 
 export type ShareDeploymentIpc = (typeof ShareDeploymentIpc)[keyof typeof ShareDeploymentIpc];
@@ -73,6 +71,24 @@ export const ShareDeploymentPersistenceProvider = {
 export type ShareDeploymentPersistenceProvider =
   (typeof ShareDeploymentPersistenceProvider)[keyof typeof ShareDeploymentPersistenceProvider];
 
+export const ShareDeploymentPersistenceStatus = {
+  Configured: 'configured',
+  Live: 'live',
+  ResetPending: 'reset_pending',
+  Error: 'error',
+} as const;
+
+export type ShareDeploymentPersistenceStatus =
+  (typeof ShareDeploymentPersistenceStatus)[keyof typeof ShareDeploymentPersistenceStatus];
+
+export const ShareDeploymentPersistenceUpdateMode = {
+  Preserve: 'preserve',
+  Replace: 'replace',
+} as const;
+
+export type ShareDeploymentPersistenceUpdateMode =
+  (typeof ShareDeploymentPersistenceUpdateMode)[keyof typeof ShareDeploymentPersistenceUpdateMode];
+
 export const ShareDeploymentPersistenceBindingKind = {
   File: 'file',
   Directory: 'directory',
@@ -96,7 +112,7 @@ export interface ShareDeploymentPersistence {
   quotaBytes?: number;
   usedBytes?: number | null;
   usedBytesEstimated?: boolean;
-  status?: string;
+  status?: ShareDeploymentPersistenceStatus;
   bindings: ShareDeploymentPersistenceBinding[];
 }
 
@@ -176,6 +192,7 @@ export interface ShareDeploymentCreateNodeInput {
   startCommand: string;
   port: number;
   persistence?: ShareDeploymentPersistence;
+  persistenceUpdateMode?: ShareDeploymentPersistenceUpdateMode;
 }
 
 export interface ShareDeploymentGetByLocalServiceInput {
@@ -200,24 +217,7 @@ export interface ShareDeploymentDownloadPersistenceInput {
 export interface ShareDeploymentDownloadPersistenceResult {
   success: boolean;
   filePath?: string;
-  error?: string;
-  code?: number;
-}
-
-export interface ShareDeploymentClearPersistenceInput {
-  deploymentId: string;
-  confirmText: string;
-}
-
-export interface ShareDeploymentImportPersistenceInput {
-  deploymentId: string;
-  archivePath: string;
-  confirmText: string;
-}
-
-export interface ShareDeploymentPersistenceMutationResult {
-  success: boolean;
-  persistence?: ShareDeploymentPersistence | null;
+  empty?: boolean;
   error?: string;
   code?: number;
 }

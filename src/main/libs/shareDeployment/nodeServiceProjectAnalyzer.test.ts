@@ -156,6 +156,7 @@ describe('buildNodeServiceProjectPackagePlan', () => {
     });
     await writeFile(projectDirectory, 'server.js', 'console.log("server");');
     await writeFile(projectDirectory, 'db.sqlite', 'sqlite');
+    await writeFile(projectDirectory, 'data/comments.json', '[]');
     await writeFile(projectDirectory, 'uploads/avatar.txt', 'avatar');
 
     const plan = await buildNodeServiceProjectPackagePlan({
@@ -168,6 +169,12 @@ describe('buildNodeServiceProjectPackagePlan', () => {
       provider: ShareDeploymentPersistenceProvider.Filesystem,
       quotaBytes: 100 * 1024 * 1024,
       bindings: [
+        {
+          appPath: 'data',
+          dataPath: 'data',
+          kind: ShareDeploymentPersistenceBindingKind.Directory,
+          sizeBytes: 2,
+        },
         {
           appPath: 'db.sqlite',
           dataPath: 'db.sqlite',
@@ -326,6 +333,8 @@ describe('buildNodeServiceProjectPackagePlan', () => {
     expect(archiveNames).not.toContain('dist/index.js');
     expect(archiveNames).not.toContain('build/index.js');
     expect(archiveNames).not.toContain('out/index.html');
+    expect(plan.analysis.excludedCount).toBeGreaterThan(0);
+    expect(plan.analysis.warnings.join('\n')).not.toContain('excluded from the deployment package');
   });
 });
 

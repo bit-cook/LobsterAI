@@ -39,12 +39,10 @@ import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
 import {
   type ShareDeploymentAnalyzeProjectInput,
-  type ShareDeploymentClearPersistenceInput,
   type ShareDeploymentCreateNodeInput,
   type ShareDeploymentDetectCandidatesInput,
   type ShareDeploymentDownloadPersistenceInput,
   type ShareDeploymentGetByLocalServiceInput,
-  type ShareDeploymentImportPersistenceInput,
   ShareDeploymentIpc,
   type ShareDeploymentSelectPersistencePathInput,
 } from '../shared/shareDeployment/constants';
@@ -716,10 +714,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(ShareDeploymentIpc.GetPersistence, deploymentId),
     downloadPersistenceArchive: (options: ShareDeploymentDownloadPersistenceInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.DownloadPersistenceArchive, options),
-    clearPersistenceData: (options: ShareDeploymentClearPersistenceInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.ClearPersistenceData, options),
-    importPersistenceData: (options: ShareDeploymentImportPersistenceInput) =>
-      ipcRenderer.invoke(ShareDeploymentIpc.ImportPersistenceData, options),
   },
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) =>

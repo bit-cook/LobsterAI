@@ -42,16 +42,13 @@ import type {
 } from '../../shared/openclawEngine/constants';
 import type {
   ShareDeploymentAnalyzeProjectInput,
-  ShareDeploymentClearPersistenceInput,
   ShareDeploymentCreateNodeInput,
   ShareDeploymentDetectCandidatesInput,
   ShareDeploymentDetectCandidatesResult,
   ShareDeploymentDownloadPersistenceInput,
   ShareDeploymentDownloadPersistenceResult,
   ShareDeploymentGetByLocalServiceInput,
-  ShareDeploymentImportPersistenceInput,
   ShareDeploymentPersistenceInfoResult,
-  ShareDeploymentPersistenceMutationResult,
   ShareDeploymentProjectAnalysis,
   ShareDeploymentResult,
   ShareDeploymentSelectPersistencePathInput,
@@ -1117,12 +1114,6 @@ interface IElectronAPI {
     downloadPersistenceArchive: (
       options: ShareDeploymentDownloadPersistenceInput,
     ) => Promise<ShareDeploymentDownloadPersistenceResult>;
-    clearPersistenceData: (
-      options: ShareDeploymentClearPersistenceInput,
-    ) => Promise<ShareDeploymentPersistenceMutationResult>;
-    importPersistenceData: (
-      options: ShareDeploymentImportPersistenceInput,
-    ) => Promise<ShareDeploymentPersistenceMutationResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;

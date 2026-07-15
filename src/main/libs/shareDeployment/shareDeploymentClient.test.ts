@@ -5,11 +5,17 @@ import path from 'path';
 import { describe, expect, test } from 'vitest';
 
 import {
+  ShareDeploymentPackageManager,
+  type ShareDeploymentPersistence,
+  ShareDeploymentPersistenceBindingKind,
+  ShareDeploymentPersistenceProvider,
+  ShareDeploymentPersistenceUpdateMode,
+} from '../../../shared/shareDeployment/constants';
+import {
   buildNodeDeploymentClientSourceKey,
   buildStaticDeploymentClientSourceKey,
-  clearDeploymentPersistenceData,
   downloadDeploymentPersistenceArchive,
-  importDeploymentPersistenceData,
+  uploadNodeDeployment,
 } from './shareDeploymentClient';
 
 function sha256(value: string): string {
@@ -86,13 +92,14 @@ describe('buildStaticDeploymentClientSourceKey', () => {
 });
 
 describe('deployment persistence data management client', () => {
-  test('downloads, clears, and imports service data through deployment persistence APIs', async () => {
+  test('downloads service data as a zip archive', async () => {
     const tempDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-persistence-client-test-'));
-    const archivePath = path.join(tempDirectory, 'brotato-service-data.zip');
-    await fs.promises.writeFile(archivePath, 'zip');
 
     try {
-      const archiveContent = new Uint8Array([1, 2, 3, 4]);
+      const archiveContent = Buffer.from(
+        '504b0506000000000000000000000000000000000000',
+        'hex',
+      );
       const downloadCalls: string[] = [];
       const downloadFetch = async (url: string): Promise<Response> => {
         downloadCalls.push(url);
@@ -111,70 +118,151 @@ describe('deployment persistence data management client', () => {
 
       expect(downloadResult.success).toBe(true);
       expect(downloadCalls).toEqual(['https://server.test/api/share-deployments/dep_data/persistence/archive']);
-      expect(path.dirname(downloadResult.filePath ?? '')).toBe(
-        path.join(tempDirectory, '.lobster', 'service-data-backups'),
+      expect(path.dirname(path.dirname(downloadResult.filePath ?? ''))).toBe(
+        path.join(tempDirectory, '.lobster', 'persistence', 'shr_data'),
       );
-      expect(path.basename(downloadResult.filePath ?? '')).toMatch(/^shr_data-service-data-.*\.zip$/);
+      expect(path.basename(downloadResult.filePath ?? '')).toBe('shr_data-service-data.zip');
       expect(await fs.promises.readFile(downloadResult.filePath ?? '')).toEqual(Buffer.from(archiveContent));
+    } finally {
+      await fs.promises.rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 
-      let clearRequest: RequestInit | undefined;
-      const clearFetch = async (_url: string, options?: RequestInit): Promise<Response> => {
-        clearRequest = options;
-        return Response.json({
-          code: 0,
-          data: {
-            enabled: true,
-            provider: 'filesystem',
-            usedBytes: 0,
-            bindings: [],
-          },
-        });
-      };
+  test('sends replace mode in the persistence manifest when redeploying', async () => {
+    const tempDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-persistence-replace-test-'),
+    );
+    const archivePath = path.join(tempDirectory, 'deployment.zip');
+    await fs.promises.writeFile(
+      archivePath,
+      Buffer.from('504b0506000000000000000000000000000000000000', 'hex'),
+    );
+    let manifest: Record<string, unknown> | undefined;
+    const persistence: ShareDeploymentPersistence = {
+      enabled: true,
+      provider: ShareDeploymentPersistenceProvider.Filesystem,
+      bindings: [{
+        appPath: 'data',
+        dataPath: 'data',
+        kind: ShareDeploymentPersistenceBindingKind.Directory,
+      }],
+    };
 
-      const clearResult = await clearDeploymentPersistenceData(
+    try {
+      const result = await uploadNodeDeployment(
         'https://server.test',
-        clearFetch,
-        {
-          deploymentId: 'dep_data',
-          confirmText: '清空线上数据',
+        'https://public.test',
+        async (_url, options) => {
+          const form = options?.body as FormData;
+          manifest = JSON.parse(String(form.get('manifest'))) as Record<string, unknown>;
+          return Response.json({
+            code: 0,
+            data: {
+              deploymentId: 'dep_data',
+              shareId: 'shr_data',
+              url: 'https://public.test/share/shr_data',
+              status: 'live',
+              deploymentStatus: 'queued',
+            },
+          });
         },
-      );
-
-      expect(clearResult.success).toBe(true);
-      expect(clearRequest?.method).toBe('POST');
-      expect(clearRequest?.headers).toEqual({ 'Content-Type': 'application/json' });
-      expect(JSON.parse(clearRequest?.body as string)).toEqual({ confirmText: '清空线上数据' });
-
-      let importRequest: RequestInit | undefined;
-      const importFetch = async (_url: string, options?: RequestInit): Promise<Response> => {
-        importRequest = options;
-        return Response.json({
-          code: 0,
-          data: {
-            enabled: true,
-            provider: 'filesystem',
-            usedBytes: 3,
-            bindings: [{ appPath: 'data', dataPath: 'data', kind: 'directory' }],
-          },
-        });
-      };
-
-      const importResult = await importDeploymentPersistenceData(
-        'https://server.test',
-        importFetch,
         {
-          deploymentId: 'dep_data',
+          sessionId: 'session-1',
+          artifactId: 'artifact-1',
+          title: 'Persistent service',
+          localServiceUrl: 'http://localhost:8000',
+          projectDirectory: tempDirectory,
+          nodeVersion: '20',
+          installCommand: 'npm install',
+          buildCommand: '',
+          startCommand: 'npm start',
+          port: 8000,
+          persistence,
+          persistenceUpdateMode: ShareDeploymentPersistenceUpdateMode.Replace,
           archivePath,
-          confirmText: '替换线上数据',
+          sourceSha256: 'source-hash',
+          archiveBytes: 22,
+          clientSourceKey: 'client-key',
+          analysis: {
+            success: true,
+            projectDirectory: tempDirectory,
+            packageManager: ShareDeploymentPackageManager.Npm,
+            nodeVersion: '20',
+            installCommand: 'npm install',
+            buildCommand: '',
+            startCommand: 'npm start',
+            port: 8000,
+            totalFiles: 1,
+            totalBytes: 22,
+            excludedCount: 0,
+            persistence,
+            warnings: [],
+            blockers: [],
+          },
         },
       );
 
-      expect(importResult.success).toBe(true);
-      expect(importRequest?.method).toBe('POST');
-      expect(importRequest?.body).toBeInstanceOf(FormData);
-      const form = importRequest?.body as FormData;
-      expect(form.get('confirmText')).toBe('替换线上数据');
-      expect((form.get('archive') as File).name).toBe('brotato-service-data.zip');
+      expect(result.success).toBe(true);
+      expect((manifest?.persistence as Record<string, unknown>).updateMode).toBe(
+        ShareDeploymentPersistenceUpdateMode.Replace,
+      );
+    } finally {
+      await fs.promises.rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects an HTTP 200 business error instead of saving it as a zip archive', async () => {
+    const tempDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-persistence-client-error-test-'),
+    );
+
+    try {
+      const result = await downloadDeploymentPersistenceArchive(
+        'https://server.test',
+        async () => Response.json({
+          code: 41505,
+          message: 'Service data management is not configured on the server.',
+          data: null,
+        }),
+        {
+          deploymentId: 'dep_data',
+          shareId: 'shr_data',
+          projectDirectory: tempDirectory,
+        },
+      );
+
+      expect(result).toEqual({
+        success: false,
+        code: 41505,
+        error: 'Service data management is not configured on the server.',
+      });
+      expect(fs.existsSync(path.join(tempDirectory, '.lobster'))).toBe(false);
+    } finally {
+      await fs.promises.rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('reports an empty online data directory without writing an archive', async () => {
+    const tempDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-persistence-client-empty-test-'),
+    );
+
+    try {
+      const result = await downloadDeploymentPersistenceArchive(
+        'https://server.test',
+        async () => new Response(null, { status: 204 }),
+        {
+          deploymentId: 'dep_data',
+          shareId: 'shr_data',
+          projectDirectory: tempDirectory,
+        },
+      );
+
+      expect(result).toEqual({
+        success: true,
+        empty: true,
+      });
+      expect(fs.existsSync(path.join(tempDirectory, '.lobster'))).toBe(false);
     } finally {
       await fs.promises.rm(tempDirectory, { recursive: true, force: true });
     }
