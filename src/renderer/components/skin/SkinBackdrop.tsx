@@ -16,18 +16,18 @@ interface SkinBackdropProps {
 
 const HOME_OVERLAY = [
   'radial-gradient(ellipse at 50% 47%,',
-  'color-mix(in srgb, var(--lobster-background) 86%, transparent) 0%,',
-  'color-mix(in srgb, var(--lobster-background) 62%, transparent) 47%,',
-  'color-mix(in srgb, var(--lobster-background) 34%, transparent) 100%)',
+  'color-mix(in srgb, var(--lobster-background) 62%, transparent) 0%,',
+  'color-mix(in srgb, var(--lobster-background) 44%, transparent) 47%,',
+  'color-mix(in srgb, var(--lobster-background) 22%, transparent) 100%)',
   ', linear-gradient(to bottom,',
-  'color-mix(in srgb, var(--lobster-background) 18%, transparent),',
-  'color-mix(in srgb, var(--lobster-background) 72%, transparent))',
+  'color-mix(in srgb, var(--lobster-background) 12%, transparent),',
+  'color-mix(in srgb, var(--lobster-background) 54%, transparent))',
 ].join(' ');
 
 const CONVERSATION_OVERLAY = [
   'linear-gradient(to bottom,',
-  'color-mix(in srgb, var(--lobster-background) 38%, transparent),',
-  'color-mix(in srgb, var(--lobster-background) 58%, transparent))',
+  'color-mix(in srgb, var(--lobster-background) 20%, transparent),',
+  'color-mix(in srgb, var(--lobster-background) 36%, transparent))',
 ].join(' ');
 
 const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
@@ -49,8 +49,8 @@ const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
         onError={() => setFailedUrl(assetUrl)}
         className={`h-full w-full scale-[1.01] object-cover object-center ${
           isHome
-            ? 'opacity-70 dark:opacity-60'
-            : 'opacity-[0.16] saturate-[0.72] blur-[0.5px] dark:opacity-[0.14]'
+            ? 'opacity-[0.82] dark:opacity-[0.72]'
+            : 'opacity-[0.32] saturate-[0.90] dark:opacity-[0.28]'
         }`}
       />
       <div

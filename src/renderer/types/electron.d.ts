@@ -55,8 +55,10 @@ import type {
   ShellOpenFailureReason,
 } from '../../shared/shell/constants';
 import type {
+  SkinApplyResponse,
   SkinDeactivateResponse,
   SkinGetActiveResponse,
+  SkinListResponse,
 } from '../../shared/skin/types';
 import type { CoworkTempDirPreview } from './cowork';
 interface ApiResponse {
@@ -609,6 +611,8 @@ interface IElectronAPI {
   };
   skin: {
     getActive: () => Promise<SkinGetActiveResponse>;
+    list: () => Promise<SkinListResponse>;
+    apply: (skinId: string) => Promise<SkinApplyResponse>;
     deactivate: () => Promise<SkinDeactivateResponse>;
     onChanged: (callback: () => void) => () => void;
   };

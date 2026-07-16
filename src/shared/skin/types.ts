@@ -28,6 +28,14 @@ export type SkinGetActiveResponse =
   | { success: true; activeSkin: PresentedSkin | null }
   | { success: false; error: string };
 
+export type SkinListResponse =
+  | { success: true; skins: PresentedSkin[] }
+  | { success: false; error: string };
+
+export type SkinApplyResponse =
+  | { success: true; activeSkin: PresentedSkin }
+  | { success: false; error: string };
+
 export type SkinDeactivateResponse =
   | { success: true }
   | { success: false; error: string };

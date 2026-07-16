@@ -47,8 +47,10 @@ import {
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
 import { SkinIpc } from '../shared/skin/constants';
 import type {
+  SkinApplyResponse,
   SkinDeactivateResponse,
   SkinGetActiveResponse,
+  SkinListResponse,
 } from '../shared/skin/types';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -133,6 +135,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   skin: {
     getActive: (): Promise<SkinGetActiveResponse> => ipcRenderer.invoke(SkinIpc.GetActive),
+    list: (): Promise<SkinListResponse> => ipcRenderer.invoke(SkinIpc.List),
+    apply: (skinId: string): Promise<SkinApplyResponse> => ipcRenderer.invoke(SkinIpc.Apply, skinId),
     deactivate: (): Promise<SkinDeactivateResponse> => ipcRenderer.invoke(SkinIpc.Deactivate),
     onChanged: (callback: () => void) => {
       const handler = () => callback();

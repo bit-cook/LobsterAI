@@ -154,6 +154,7 @@ describe('SkinStore', () => {
     expect((await createStore(rootDir).getActive())?.id).toBe('skin-one');
     await store.deactivate();
     expect(await store.getActive()).toBeNull();
+    expect((await createStore(rootDir).listSkins()).map(skin => skin.id)).toEqual(['skin-one']);
   });
 
   test('requires all slots before apply and keeps only one active skin', async () => {

@@ -4,6 +4,7 @@ import { SkinAssetSlot } from '../../shared/skin/constants';
 import {
   buildSkinAssetUrl,
   normalizeActiveSkin,
+  normalizeSkinList,
   resolveSupportedSkinBaseThemeId,
 } from './skin';
 
@@ -71,6 +72,36 @@ describe('normalizeActiveSkin', () => {
       },
     })).toBeNull();
     expect(normalizeActiveSkin({ success: true, skin: null })).toBeNull();
+  });
+});
+
+describe('normalizeSkinList', () => {
+  test('keeps reusable managed skins and ignores invalid list entries', () => {
+    const skins = normalizeSkinList({
+      success: true,
+      skins: [
+        {
+          id: 'three-kingdoms',
+          name: '三国蜀汉 Q 版',
+          assets: {
+            [SkinAssetSlot.WorkspaceBackdrop]: 'lobster-skin://asset/three-kingdoms/workspace.backdrop',
+            [SkinAssetSlot.HomeEmblem]: 'lobster-skin://asset/three-kingdoms/home.emblem',
+          },
+        },
+        {
+          id: 'remote-only',
+          assets: {
+            [SkinAssetSlot.WorkspaceBackdrop]: 'https://example.test/background.png',
+          },
+        },
+      ],
+    });
+
+    expect(skins).toHaveLength(1);
+    expect(skins[0]).toMatchObject({
+      id: 'three-kingdoms',
+      name: '三国蜀汉 Q 版',
+    });
   });
 });
 

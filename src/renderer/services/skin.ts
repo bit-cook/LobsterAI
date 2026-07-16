@@ -120,6 +120,21 @@ export const normalizeActiveSkin = (value: unknown): ActiveSkin | null => {
   };
 };
 
+export const normalizeSkinList = (value: unknown): ActiveSkin[] => {
+  let candidates: unknown[] = [];
+  if (Array.isArray(value)) {
+    candidates = value;
+  } else if (isRecord(value) && Array.isArray(value.skins)) {
+    candidates = value.skins;
+  } else if (isRecord(value) && isRecord(value.data) && Array.isArray(value.data.skins)) {
+    candidates = value.data.skins;
+  }
+
+  return candidates
+    .map(normalizeActiveSkin)
+    .filter((skin): skin is ActiveSkin => skin !== null);
+};
+
 export const buildSkinAssetUrl = (
   asset: SkinAssetReference | undefined,
   refreshVersion: number,
@@ -157,6 +172,25 @@ class SkinService {
       throw new Error(readString(result, ['error', 'message']) ?? 'Failed to load active skin');
     }
     return normalizeActiveSkin(result);
+  }
+
+  async list(): Promise<ActiveSkin[]> {
+    const api = getRendererSkinApi();
+    if (!api) return [];
+    const result = await api.list();
+    if (isRecord(result) && result.success === false) {
+      throw new Error(readString(result, ['error', 'message']) ?? 'Failed to list skins');
+    }
+    return normalizeSkinList(result);
+  }
+
+  async apply(skinId: string): Promise<void> {
+    const api = getRendererSkinApi();
+    if (!api) return;
+    const result = await api.apply(skinId);
+    if (isRecord(result) && result.success === false) {
+      throw new Error(readString(result, ['error', 'message']) ?? 'Failed to apply skin');
+    }
   }
 
   async deactivate(): Promise<void> {

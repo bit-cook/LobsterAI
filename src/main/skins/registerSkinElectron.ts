@@ -1,9 +1,15 @@
 import { BrowserWindow, ipcMain, protocol } from 'electron';
 
-import { SkinIpc, SkinProtocol } from '../../shared/skin/constants';
+import {
+  SkinIpc,
+  SkinProtocol,
+  SkinRecordStatus,
+} from '../../shared/skin/constants';
 import type {
+  SkinApplyResponse,
   SkinDeactivateResponse,
   SkinGetActiveResponse,
+  SkinListResponse,
 } from '../../shared/skin/types';
 import { presentSkin } from './skinPresentation';
 import { createSkinProtocolHandler } from './skinProtocol';
@@ -43,6 +49,41 @@ export function registerSkinElectronIntegration(store: SkinStore): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to load active skin',
+      };
+    }
+  });
+
+  ipcMain.handle(SkinIpc.List, async (): Promise<SkinListResponse> => {
+    try {
+      const skins = await store.listSkins();
+      return {
+        success: true,
+        skins: skins
+          .filter(skin => skin.status === SkinRecordStatus.Ready)
+          .map(presentSkin),
+      };
+    } catch (error) {
+      console.error('[Skin] failed to list skins:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list skins',
+      };
+    }
+  });
+
+  ipcMain.handle(SkinIpc.Apply, async (_event, skinId: string): Promise<SkinApplyResponse> => {
+    try {
+      const activeSkin = await store.apply(skinId);
+      notifySkinChanged();
+      return {
+        success: true,
+        activeSkin: presentSkin(activeSkin),
+      };
+    } catch (error) {
+      console.error('[Skin] failed to apply skin:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to apply skin',
       };
     }
   });

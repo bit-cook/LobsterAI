@@ -54,6 +54,8 @@ export const SkinProtocol = {
 
 export const SkinIpc = {
   GetActive: 'skin:getActive',
+  List: 'skin:list',
+  Apply: 'skin:apply',
   Deactivate: 'skin:deactivate',
   Changed: 'skin:changed',
 } as const;

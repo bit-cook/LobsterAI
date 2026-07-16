@@ -450,6 +450,14 @@ export class SkinStore {
     return record ? cloneSkinRecord(record) : null;
   }
 
+  async listSkins(): Promise<SkinRecord[]> {
+    await this.mutationQueue;
+    const registry = await this.readRegistry();
+    return Object.values(registry.skins)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(cloneSkinRecord);
+  }
+
   async getSkin(skinId: string): Promise<SkinRecord | null> {
     if (!SKIN_ID_PATTERN.test(skinId)) return null;
     await this.mutationQueue;
