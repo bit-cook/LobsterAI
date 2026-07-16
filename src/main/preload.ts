@@ -45,6 +45,11 @@ import {
   ShareDeploymentIpc,
 } from '../shared/shareDeployment/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
+import { SkinIpc } from '../shared/skin/constants';
+import type {
+  SkinDeactivateResponse,
+  SkinGetActiveResponse,
+} from '../shared/skin/types';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
 import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
@@ -125,6 +130,15 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('kits:install', params),
     uninstall: (kitId: string) => ipcRenderer.invoke('kits:uninstall', kitId),
     listInstalled: () => ipcRenderer.invoke('kits:listInstalled'),
+  },
+  skin: {
+    getActive: (): Promise<SkinGetActiveResponse> => ipcRenderer.invoke(SkinIpc.GetActive),
+    deactivate: (): Promise<SkinDeactivateResponse> => ipcRenderer.invoke(SkinIpc.Deactivate),
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(SkinIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(SkinIpc.Changed, handler);
+    },
   },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke(PermissionIpcChannel.CheckCalendar),

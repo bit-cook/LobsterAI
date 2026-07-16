@@ -93,6 +93,7 @@ import FileTypeIcon from '../icons/fileTypes/FileTypeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import SubagentIcon from '../icons/SubagentIcon';
 import MarkdownContent from '../MarkdownContent';
+import SkinBackdrop, { SkinBackdropVariant } from '../skin/SkinBackdrop';
 import AssistantTurnBlock, { ContextCompactionDivider } from './AssistantTurnBlock';
 import { type CoworkOpenShareOptionsEventDetail, CoworkUiEvent } from './constants';
 import ContextUsageIndicator from './ContextUsageIndicator';
@@ -4636,10 +4637,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       <div ref={contentRowRef} className="relative flex-1 flex overflow-hidden">
       <div
         ref={detailRootRef}
-        className="flex-1 flex flex-col bg-background h-full min-w-0"
+        className="relative flex-1 flex flex-col bg-background h-full min-w-0"
         style={{ minWidth: isArtifactPanelExpanded ? 0 : COWORK_DETAIL_MIN_WIDTH }}
       >
-      <div className="relative flex-1 min-h-0">
+      <SkinBackdrop variant={SkinBackdropVariant.Conversation} />
+      <div className="relative z-10 flex-1 min-h-0">
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}

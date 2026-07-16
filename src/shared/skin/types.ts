@@ -1,0 +1,33 @@
+import type {
+  SkinAssetSlot,
+  SkinRecordStatus,
+  SkinWorkflowKind,
+} from './constants';
+
+export interface PresentedSkinAsset {
+  url: string;
+  cacheKey: string;
+  mimeType: string;
+  width: number;
+  height: number;
+}
+
+export interface PresentedSkin {
+  id: string;
+  name?: string;
+  workflowKind: SkinWorkflowKind;
+  baseThemeId?: string;
+  status: SkinRecordStatus;
+  assets: Partial<Record<SkinAssetSlot, PresentedSkinAsset>>;
+  createdAt: string;
+  updatedAt: string;
+  appliedAt?: string;
+}
+
+export type SkinGetActiveResponse =
+  | { success: true; activeSkin: PresentedSkin | null }
+  | { success: false; error: string };
+
+export type SkinDeactivateResponse =
+  | { success: true }
+  | { success: false; error: string };

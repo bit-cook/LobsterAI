@@ -37,6 +37,7 @@ import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
 import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
 import { defaultConfig, getProviderDisplayName, ShortcutAction } from './config';
+import { SkinProvider } from './providers/SkinProvider';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
 import { authService } from './services/auth';
@@ -1197,14 +1198,16 @@ const App: React.FC = () => {
             </div>
           </div>
           {showSettings && (
-            <Settings
-              onClose={handleCloseSettings}
-              initialTab={settingsOptions.initialTab}
-              initialTabRequestId={settingsOptions.requestId}
-              notice={settingsOptions.notice}
-              onUpdateFound={handleUpdateFound}
-              enterpriseConfig={enterpriseConfig}
-            />
+            <SkinProvider>
+              <Settings
+                onClose={handleCloseSettings}
+                initialTab={settingsOptions.initialTab}
+                initialTabRequestId={settingsOptions.requestId}
+                notice={settingsOptions.notice}
+                onUpdateFound={handleUpdateFound}
+                enterpriseConfig={enterpriseConfig}
+              />
+            </SkinProvider>
           )}
         </div>
       </div>
@@ -1212,7 +1215,8 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+    <SkinProvider>
+      <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
       {toastMessage && (
         <Toast
           message={toastMessage}
@@ -1345,7 +1349,8 @@ const App: React.FC = () => {
           onCustomModel={handleWelcomeCustomModel}
         />
       )}
-    </div>
+      </div>
+    </SkinProvider>
   );
 };
 

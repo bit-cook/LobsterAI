@@ -38,6 +38,8 @@ import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel, QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
+import HomeSkinEmblem from '../skin/HomeSkinEmblem';
+import SkinBackdrop, { SkinBackdropVariant } from '../skin/SkinBackdrop';
 import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
@@ -709,7 +711,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const isEngineReady = isOpenClawReadyForSession(openClawStatus);
 
   const homeHeader = (
-    <div className="draggable flex h-12 items-center justify-between px-4 shrink-0">
+    <div className="draggable relative z-10 flex h-12 items-center justify-between px-4 shrink-0">
       <div className="non-draggable h-8 flex items-center">
         {isSidebarCollapsed && !isWindows && (
           <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
@@ -812,6 +814,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // Home view - no current session
   return (
     <div className="relative flex-1 flex flex-col bg-background h-full">
+      <SkinBackdrop variant={SkinBackdropVariant.Home} />
+
       {/* Engine status banner for non-blocking states */}
       {engineStatusBanner}
 
@@ -819,7 +823,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       {homeHeader}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto min-h-0 relative">
+      <div className="relative z-10 flex-1 overflow-y-auto min-h-0">
         <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 py-8">
           {/* Flexible spacers (2:3) keep the welcome block at the optical
               center on tall windows; min-h preserves breathing room before
@@ -827,9 +831,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
           {/* Welcome Section - staggered entrance animation */}
           <div className="w-full max-w-3xl text-center">
-            <img
-              src="logo.png"
-              alt="LobsterAI"
+            <HomeSkinEmblem
               className="mx-auto h-12 w-12 animate-fade-in-up"
             />
             <h2
