@@ -307,6 +307,12 @@ import {
   uploadNodeDeployment,
   uploadStaticDeployment,
 } from './libs/shareDeployment/shareDeploymentClient';
+import {
+  reconcileShareDeploymentAccess,
+  type ShareDeploymentAccessSyncFailure,
+  ShareDeploymentAccessSyncOperation,
+  ShareDeploymentOperationCoordinator,
+} from './libs/shareDeployment/shareDeploymentOperationCoordinator';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -397,6 +403,7 @@ const SHARE_DEPLOYMENT_PROJECT_CANDIDATE_MAX_ITEMS = 24;
 const SHARE_DEPLOYMENT_CANDIDATE_SOURCES = new Set<string>(
   Object.values(ShareDeploymentCandidateSource),
 );
+const shareDeploymentOperationCoordinator = new ShareDeploymentOperationCoordinator();
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 const LOCAL_WEB_SERVICE_PROBE_TIMEOUT_MS = 700;
 const LOCAL_WEB_SERVICE_TITLE_MAX_LENGTH = 80;
@@ -889,6 +896,20 @@ function sanitizeShareDeploymentPersistenceUpdateMode(
   throw new Error('persistenceUpdateMode must be preserve or replace.');
 }
 
+function formatShareDeploymentAccessSyncError(
+  failures: ShareDeploymentAccessSyncFailure[],
+): string | undefined {
+  if (failures.length === 0) return undefined;
+  const message = failures
+    .map(failure => failure.error || (
+      failure.operation === ShareDeploymentAccessSyncOperation.AccessMode
+        ? t('htmlShareAccessModeUpdateFailed')
+        : t('htmlShareStatusUpdateFailed')
+    ))
+    .join('; ');
+  return t('nodeDeploymentAccessStatusApplyFailed', { message });
+}
+
 function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeploymentCreateNodeInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Invalid node deployment request.');
@@ -901,6 +922,7 @@ function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeployment
     localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
     projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
     accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
+    previousAccessMode: sanitizeHtmlShareAccessMode(source.previousAccessMode),
     nodeVersion: sanitizeHtmlShareString(source.nodeVersion, 'nodeVersion', 32),
     installCommand: sanitizeOptionalShareDeploymentCommand(source.installCommand, 'installCommand'),
     buildCommand: sanitizeOptionalShareDeploymentCommand(source.buildCommand, 'buildCommand'),
@@ -910,6 +932,8 @@ function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeployment
     persistenceUpdateMode: sanitizeShareDeploymentPersistenceUpdateMode(
       source.persistenceUpdateMode,
     ),
+    targetShareStatus:
+      sanitizeHtmlShareConfigurableStatus(source.targetShareStatus) ?? HtmlShareStatus.Live,
   };
 }
 
@@ -934,8 +958,15 @@ function sanitizeShareDeploymentSelectPersistencePathInput(
     throw new Error('Invalid service data path selection request.');
   }
   const source = input as Record<string, unknown>;
+  if (
+    source.kind !== ShareDeploymentPersistenceBindingKind.Directory &&
+    source.kind !== ShareDeploymentPersistenceBindingKind.File
+  ) {
+    throw new Error('Invalid service data path kind.');
+  }
   return {
     projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    kind: source.kind,
   };
 }
 
@@ -965,6 +996,13 @@ const SHARE_DEPLOYMENT_PERSISTENCE_EXCLUDED_SEGMENTS = new Set([
   '.next',
   '.output',
 ]);
+
+function isSensitiveShareDeploymentPersistenceFileName(fileName: string): boolean {
+  const normalized = fileName.trim().toLowerCase();
+  return normalized === '.env' ||
+    normalized.startsWith('.env.') ||
+    /(?:^|[-_.])(secret|credential|credentials|token|private[-_.]?key)(?:[-_.]|$)/i.test(fileName);
+}
 
 async function estimateShareDeploymentPersistencePathBytes(filePath: string): Promise<number | undefined> {
   const maxVisited = 2000;
@@ -1025,6 +1063,12 @@ async function buildShareDeploymentPersistenceBindingFromPath(
       : null;
   if (!kind) {
     throw new Error('Selected service data must be a file or directory.');
+  }
+  if (
+    kind === ShareDeploymentPersistenceBindingKind.File &&
+    isSensitiveShareDeploymentPersistenceFileName(path.basename(targetPath))
+  ) {
+    throw new Error('Selected service data path is not supported.');
   }
   const sizeBytes = await estimateShareDeploymentPersistencePathBytes(targetPath);
   return {
@@ -5782,7 +5826,9 @@ if (!gotTheLock) {
         defaultPath = undefined;
       }
       const dialogOptions = {
-        properties: ['openDirectory'] as 'openDirectory'[],
+        properties: options.kind === ShareDeploymentPersistenceBindingKind.File
+          ? ['openFile'] as 'openFile'[]
+          : ['openDirectory'] as 'openDirectory'[],
         defaultPath,
       };
       const result = ownerWindow
@@ -5814,72 +5860,109 @@ if (!gotTheLock) {
     let archivePath: string | undefined;
     try {
       const options = sanitizeShareDeploymentCreateNodeInput(input);
+      const operationSourceKey = buildNodeDeploymentClientSourceKey({
+        sessionId: options.sessionId,
+        localServiceUrl: options.localServiceUrl,
+        projectDirectory: options.projectDirectory,
+      });
       console.debug(
         `[ShareDeployment] received node deployment request for session ${options.sessionId} and artifact ${options.artifactId}`,
       );
-      const packaged = await packageNodeServiceDeployment({
-        projectDirectory: options.projectDirectory,
-        localServiceUrl: options.localServiceUrl,
-        installCommand: options.installCommand,
-        buildCommand: options.buildCommand,
-        startCommand: options.startCommand,
-        port: options.port,
-        persistence: options.persistence,
-      });
-      archivePath = packaged.archivePath;
-      const analysis = options.persistence
-        ? {
-            ...packaged.analysis,
-            persistence: options.persistence,
-          }
-        : packaged.analysis;
-      const isStaticDeployment = packaged.deploymentKind === ShareDeploymentKind.StaticSite;
-      const clientSourceKey = isStaticDeployment
-        ? buildStaticDeploymentClientSourceKey({
-            sessionId: options.sessionId,
-            localServiceUrl: options.localServiceUrl,
-            projectDirectory: options.projectDirectory,
-          })
-        : buildNodeDeploymentClientSourceKey({
-            sessionId: options.sessionId,
-            localServiceUrl: options.localServiceUrl,
-            projectDirectory: options.projectDirectory,
-          });
-      const result = isStaticDeployment
-        ? await uploadStaticDeployment(
-            getServerApiBaseUrl(),
-            getHtmlSharePublicBaseUrl(),
-            fetchWithAuth,
+      return await shareDeploymentOperationCoordinator.run(operationSourceKey, async () => {
+        const packaged = await packageNodeServiceDeployment({
+          projectDirectory: options.projectDirectory,
+          localServiceUrl: options.localServiceUrl,
+          installCommand: options.installCommand,
+          buildCommand: options.buildCommand,
+          startCommand: options.startCommand,
+          port: options.port,
+          persistence: options.persistence,
+        });
+        archivePath = packaged.archivePath;
+        const analysis = options.persistence
+          ? {
+              ...packaged.analysis,
+              persistence: options.persistence,
+            }
+          : packaged.analysis;
+        const isStaticDeployment = packaged.deploymentKind === ShareDeploymentKind.StaticSite;
+        const clientSourceKey = isStaticDeployment
+          ? buildStaticDeploymentClientSourceKey({
+              sessionId: options.sessionId,
+              localServiceUrl: options.localServiceUrl,
+              projectDirectory: options.projectDirectory,
+            })
+          : operationSourceKey;
+        const serverBaseUrl = getServerApiBaseUrl();
+        const publicBaseUrl = getHtmlSharePublicBaseUrl();
+        const result = isStaticDeployment
+          ? await uploadStaticDeployment(
+              serverBaseUrl,
+              publicBaseUrl,
+              fetchWithAuth,
+              {
+                ...options,
+                archivePath: packaged.archivePath,
+                sourceSha256: packaged.sourceSha256,
+                analysis,
+                archiveBytes: packaged.archiveBytes,
+                clientSourceKey,
+                deploymentKind: ShareDeploymentKind.StaticSite,
+                entryFile: packaged.entryFile ?? 'index.html',
+                spaFallback: packaged.spaFallback ?? true,
+              },
+            )
+          : await uploadNodeDeployment(
+              serverBaseUrl,
+              publicBaseUrl,
+              fetchWithAuth,
+              {
+                ...options,
+                archivePath: packaged.archivePath,
+                sourceSha256: packaged.sourceSha256,
+                analysis,
+                archiveBytes: packaged.archiveBytes,
+                clientSourceKey,
+                deploymentKind: ShareDeploymentKind.NodeService,
+              },
+            );
+        let finalResult = result;
+        if (result.success && result.deployment) {
+          const accessSync = await reconcileShareDeploymentAccess(
+            result.deployment,
             {
-              ...options,
-              archivePath: packaged.archivePath,
-              sourceSha256: packaged.sourceSha256,
-              analysis,
-              archiveBytes: packaged.archiveBytes,
-              clientSourceKey,
-              deploymentKind: ShareDeploymentKind.StaticSite,
-              entryFile: packaged.entryFile ?? 'index.html',
-              spaFallback: packaged.spaFallback ?? true,
+              accessMode: options.accessMode ?? HtmlShareAccessMode.Code,
+              previousAccessMode: options.previousAccessMode,
+              targetShareStatus: options.targetShareStatus ?? HtmlShareStatus.Live,
             },
-          )
-        : await uploadNodeDeployment(
-            getServerApiBaseUrl(),
-            getHtmlSharePublicBaseUrl(),
-            fetchWithAuth,
             {
-              ...options,
-              archivePath: packaged.archivePath,
-              sourceSha256: packaged.sourceSha256,
-              analysis,
-              archiveBytes: packaged.archiveBytes,
-              clientSourceKey,
-              deploymentKind: ShareDeploymentKind.NodeService,
+              updateAccessMode: (shareId, accessMode) => updateHtmlShareAccessMode(
+                serverBaseUrl,
+                publicBaseUrl,
+                fetchWithAuth,
+                shareId,
+                accessMode,
+              ),
+              updateStatus: (shareId, status) => updateHtmlShareStatus(
+                serverBaseUrl,
+                publicBaseUrl,
+                fetchWithAuth,
+                shareId,
+                status,
+              ),
             },
           );
-      console.debug(
-        `[ShareDeployment] local service deployment request finished with kind ${packaged.deploymentKind} success ${result.success} and code ${result.code ?? 'none'}`,
-      );
-      return result;
+          finalResult = {
+            ...result,
+            deployment: accessSync.deployment,
+            accessSyncError: formatShareDeploymentAccessSyncError(accessSync.failures),
+          };
+        }
+        console.debug(
+          `[ShareDeployment] local service deployment request finished with kind ${packaged.deploymentKind} success ${finalResult.success} and code ${finalResult.code ?? 'none'}`,
+        );
+        return finalResult;
+      });
     } catch (error) {
       console.error('[ShareDeployment] failed to create node deployment:', error);
       return {

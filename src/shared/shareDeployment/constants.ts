@@ -1,5 +1,6 @@
 import type {
   HtmlShareAccessMode,
+  HtmlShareConfigurableStatus,
   HtmlShareDisabledSource,
   HtmlShareStatus,
 } from '../htmlShare/constants';
@@ -25,6 +26,9 @@ export const ShareDeploymentCandidateSource = {
   TextFileLink: 'text_file_link',
   TextCdCommand: 'text_cd_command',
   TextCommonParent: 'text_common_parent',
+  ToolWorkingDirectory: 'tool_working_directory',
+  ToolCdCommand: 'tool_cd_command',
+  ToolPwdResult: 'tool_pwd_result',
   Workspace: 'workspace',
   WorkspaceChild: 'workspace_child',
   Cache: 'cache',
@@ -55,6 +59,18 @@ export const ShareDeploymentStatus = {
 
 export type ShareDeploymentStatus =
   (typeof ShareDeploymentStatus)[keyof typeof ShareDeploymentStatus];
+
+export const ShareDeploymentFailureCode = {
+  Provider: 'provider_error',
+  Service: 'service_error',
+  Unexpected: 'unexpected_error',
+  PersistenceUnavailable: 'persistence_unavailable',
+  PersistenceInvalid: 'persistence_invalid',
+  PersistenceDataMissing: 'persistence_data_missing',
+} as const;
+
+export type ShareDeploymentFailureCode =
+  (typeof ShareDeploymentFailureCode)[keyof typeof ShareDeploymentFailureCode];
 
 export const ShareDeploymentKind = {
   NodeService: 'node_service',
@@ -118,6 +134,7 @@ export interface ShareDeploymentPersistence {
 
 export interface ShareDeploymentSelectPersistencePathInput {
   projectDirectory: string;
+  kind: ShareDeploymentPersistenceBindingKind;
 }
 
 export interface ShareDeploymentSelectPersistencePathResult {
@@ -186,6 +203,7 @@ export interface ShareDeploymentCreateNodeInput {
   localServiceUrl: string;
   projectDirectory: string;
   accessMode?: HtmlShareAccessMode;
+  previousAccessMode?: HtmlShareAccessMode;
   nodeVersion: string;
   installCommand: string;
   buildCommand: string;
@@ -193,6 +211,7 @@ export interface ShareDeploymentCreateNodeInput {
   port: number;
   persistence?: ShareDeploymentPersistence;
   persistenceUpdateMode?: ShareDeploymentPersistenceUpdateMode;
+  targetShareStatus?: HtmlShareConfigurableStatus;
 }
 
 export interface ShareDeploymentGetByLocalServiceInput {
@@ -258,6 +277,7 @@ export interface ShareDeploymentRecord {
   deployedAt?: string;
   expiresAt?: string;
   lastAccessedAt?: string;
+  errorCode?: ShareDeploymentFailureCode;
   errorMessage?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -269,6 +289,7 @@ export interface ShareDeploymentResult {
   deployment?: ShareDeploymentRecord | null;
   analysis?: ShareDeploymentProjectAnalysis;
   warnings?: string[];
+  accessSyncError?: string;
   error?: string;
   code?: number;
 }

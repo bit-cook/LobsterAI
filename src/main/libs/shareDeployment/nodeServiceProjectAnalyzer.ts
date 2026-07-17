@@ -79,8 +79,6 @@ const BLOCKED_FILE_NAMES = new Set([
   'pnpm-debug.log',
 ]);
 
-const PROJECT_CANDIDATE_SCAN_MAX_DEPTH = 3;
-const PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES = 300;
 const NEXT_STANDALONE_START_COMMAND = 'node server.js';
 const NITRO_OUTPUT_START_COMMAND = 'node .output/server/index.mjs';
 const STATIC_BUILD_START_COMMAND = 'node server.js';
@@ -608,10 +606,10 @@ async function collectPackageEntries(
 
       const stat = await fs.promises.stat(absolutePath);
       totalBytes += stat.size;
-      if (isPersistenceDatabaseFile(relativeParts, child.name)) {
-        addPersistenceCandidate(relativePath, ShareDeploymentPersistenceBindingKind.File, stat.size);
-      } else if (relativeParts.length > 1 && isRootPersistenceDirectory([relativeParts[0]])) {
+      if (relativeParts.length > 1 && isRootPersistenceDirectory([relativeParts[0]])) {
         addPersistenceCandidate(relativeParts[0], ShareDeploymentPersistenceBindingKind.Directory, stat.size);
+      } else if (isPersistenceDatabaseFile(relativeParts, child.name)) {
+        addPersistenceCandidate(relativePath, ShareDeploymentPersistenceBindingKind.File, stat.size);
       }
       entries.push({
         absolutePath,
@@ -881,13 +879,11 @@ async function getPidListeningOnPort(port: number): Promise<string | null> {
 
 async function getProcessCwd(pid: string): Promise<string | null> {
   if (process.platform === 'win32') return null;
-  if (process.platform === 'darwin') {
-    const procCwd = `/proc/${pid}/cwd`;
-    try {
-      return await fs.promises.realpath(procCwd);
-    } catch {
-      // macOS does not expose /proc by default; fall through to lsof.
-    }
+  const procCwd = `/proc/${pid}/cwd`;
+  try {
+    return await fs.promises.realpath(procCwd);
+  } catch {
+    // Linux normally resolves /proc directly; macOS and restricted systems fall through to lsof.
   }
   try {
     const { stdout } = await execFileAsync('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], {
@@ -936,57 +932,6 @@ async function pushUsableInputCandidate(
     ...candidate,
     directory,
   });
-}
-
-async function findWorkspaceChildProjectCandidates(
-  workingDirectory?: string,
-): Promise<ShareDeploymentProjectCandidate[]> {
-  if (!workingDirectory?.trim()) return [];
-
-  const root = path.resolve(workingDirectory.trim());
-  try {
-    const stat = await fs.promises.stat(root);
-    if (!stat.isDirectory() || isBlockedRootDirectory(root)) return [];
-  } catch {
-    return [];
-  }
-
-  const candidates: ShareDeploymentProjectCandidate[] = [];
-  let visitedDirectories = 0;
-
-  async function walk(directory: string, depth: number): Promise<void> {
-    if (depth > PROJECT_CANDIDATE_SCAN_MAX_DEPTH) return;
-    if (visitedDirectories >= PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES) return;
-
-    let children: fs.Dirent[];
-    try {
-      children = await fs.promises.readdir(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const child of children) {
-      if (visitedDirectories >= PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES) return;
-      if (!child.isDirectory() || child.isSymbolicLink()) continue;
-      if (isBlockedPathPart(child.name, SOURCE_BLOCKED_DIRECTORY_NAMES)) continue;
-
-      const childDirectory = path.join(directory, child.name);
-      visitedDirectories += 1;
-      if (await isUsableProjectDirectory(childDirectory)) {
-        pushUniqueCandidate(candidates, {
-          directory: childDirectory,
-          source: ShareDeploymentCandidateSource.WorkspaceChild,
-          confidence: Math.max(50, 76 - depth * 6),
-          reason: 'Found a deployable project under the current workspace directory.',
-        });
-      }
-
-      await walk(childDirectory, depth + 1);
-    }
-  }
-
-  await walk(root, 1);
-  return candidates;
 }
 
 export async function detectNodeServiceProjectCandidates(
@@ -1071,9 +1016,7 @@ export async function detectNodeServiceProjectCandidates(
       : null,
   );
 
-  for (const childProjectCandidate of await findWorkspaceChildProjectCandidates(input.workingDirectory)) {
-    pushUniqueCandidate(candidates, childProjectCandidate);
-  }
-
-  return candidates.sort((a, b) => b.confidence - a.confidence);
+  // Preserve the fallback stages instead of globally re-sorting by confidence:
+  // listening process -> session context -> previous selection -> working directory.
+  return candidates;
 }

@@ -12,6 +12,8 @@ import {
   type ShareDeploymentCreateNodeInput,
   type ShareDeploymentDownloadPersistenceInput,
   type ShareDeploymentDownloadPersistenceResult,
+  ShareDeploymentFailureCode,
+  type ShareDeploymentFailureCode as ShareDeploymentFailureCodeValue,
   type ShareDeploymentGetByLocalServiceInput,
   ShareDeploymentKind,
   type ShareDeploymentPersistenceInfoResult,
@@ -61,6 +63,7 @@ interface ServerShareDeploymentResponse {
   expiresAt?: string;
   lastAccessedAt?: string;
   failureMessage?: string;
+  failureCode?: string;
   createdAt?: string;
   updatedAt?: string;
   events?: ShareDeploymentRecord['events'];
@@ -239,6 +242,10 @@ function normalizeDeploymentStatus(value?: string): ShareDeploymentStatus {
   }
 }
 
+function normalizeDeploymentFailureCode(value?: string): ShareDeploymentFailureCodeValue | undefined {
+  return Object.values(ShareDeploymentFailureCode).find(code => code === value);
+}
+
 function buildDeploymentRecord(
   data: ServerShareDeploymentResponse | undefined,
   publicBaseUrl: string,
@@ -287,6 +294,7 @@ function buildDeploymentRecord(
     persistence: data.persistence,
     expiresAt: data.expiresAt,
     lastAccessedAt: data.lastAccessedAt,
+    errorCode: normalizeDeploymentFailureCode(data.failureCode),
     errorMessage: data.failureMessage,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
@@ -296,6 +304,15 @@ function buildDeploymentRecord(
 
 function buildManifest(input: UploadNodeDeploymentInput | UploadStaticDeploymentInput): Record<string, unknown> {
   const isStaticDeployment = input.deploymentKind === ShareDeploymentKind.StaticSite;
+  const persistence = input.persistence ?? input.analysis.persistence;
+  const manifestPersistence =
+    !isStaticDeployment && persistence?.enabled && persistence.bindings.length > 0
+      ? {
+          ...persistence,
+          updateMode:
+            input.persistenceUpdateMode ?? ShareDeploymentPersistenceUpdateMode.Preserve,
+        }
+      : undefined;
   return {
     schemaVersion: 1,
     deploymentKind: isStaticDeployment ? ShareDeploymentKind.StaticSite : ShareDeploymentKind.NodeService,
@@ -318,13 +335,7 @@ function buildManifest(input: UploadNodeDeploymentInput | UploadStaticDeployment
     includedFileCount: input.analysis.totalFiles,
     estimatedSourceArchiveBytes: input.archiveBytes,
     localServiceUrl: input.localServiceUrl,
-    persistence: isStaticDeployment || !input.analysis.persistence
-      ? undefined
-      : {
-          ...input.analysis.persistence,
-          updateMode:
-            input.persistenceUpdateMode ?? ShareDeploymentPersistenceUpdateMode.Preserve,
-        },
+    ...(manifestPersistence ? { persistence: manifestPersistence } : {}),
     env: [],
   };
 }
@@ -486,6 +497,12 @@ export async function downloadDeploymentPersistenceArchive(
   }
   const archiveBuffer = Buffer.from(await response.arrayBuffer());
   const payload = parsePersistenceArchiveError(archiveBuffer);
+  if (!response.ok && isMissingPersistenceDataError(payload?.message)) {
+    return {
+      success: true,
+      empty: true,
+    };
+  }
   if (!response.ok || !hasZipArchiveSignature(archiveBuffer)) {
     return {
       success: false,
@@ -607,4 +624,8 @@ function parsePersistenceArchiveError(buffer: Buffer): ApiResponse<unknown> | nu
   } catch {
     return null;
   }
+}
+
+function isMissingPersistenceDataError(message?: string): boolean {
+  return message?.toLowerCase().includes('cloud data does not exist') ?? false;
 }

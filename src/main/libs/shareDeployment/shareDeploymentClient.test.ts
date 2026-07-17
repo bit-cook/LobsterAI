@@ -5,6 +5,7 @@ import path from 'path';
 import { describe, expect, test } from 'vitest';
 
 import {
+  ShareDeploymentFailureCode,
   ShareDeploymentPackageManager,
   type ShareDeploymentPersistence,
   ShareDeploymentPersistenceBindingKind,
@@ -163,6 +164,7 @@ describe('deployment persistence data management client', () => {
               url: 'https://public.test/share/shr_data',
               status: 'live',
               deploymentStatus: 'queued',
+              failureCode: 'persistence_unavailable',
             },
           });
         },
@@ -203,9 +205,113 @@ describe('deployment persistence data management client', () => {
       );
 
       expect(result.success).toBe(true);
+      expect(result.deployment?.errorCode).toBe(
+        ShareDeploymentFailureCode.PersistenceUnavailable,
+      );
       expect((manifest?.persistence as Record<string, unknown>).updateMode).toBe(
         ShareDeploymentPersistenceUpdateMode.Replace,
       );
+    } finally {
+      await fs.promises.rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    {
+      name: 'disabled by the renderer',
+      persistence: {
+        enabled: false,
+        provider: ShareDeploymentPersistenceProvider.Filesystem,
+        bindings: [{
+          appPath: 'data',
+          dataPath: 'data',
+          kind: ShareDeploymentPersistenceBindingKind.Directory,
+        }],
+      } satisfies ShareDeploymentPersistence,
+    },
+    {
+      name: 'enabled without bindings',
+      persistence: {
+        enabled: true,
+        provider: ShareDeploymentPersistenceProvider.Filesystem,
+        bindings: [],
+      } satisfies ShareDeploymentPersistence,
+    },
+  ])('omits persistence from the manifest when it is $name', async ({ persistence }) => {
+    const tempDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-persistence-disabled-test-'),
+    );
+    const archivePath = path.join(tempDirectory, 'deployment.zip');
+    await fs.promises.writeFile(
+      archivePath,
+      Buffer.from('504b0506000000000000000000000000000000000000', 'hex'),
+    );
+    const detectedPersistence: ShareDeploymentPersistence = {
+      enabled: true,
+      provider: ShareDeploymentPersistenceProvider.Filesystem,
+      bindings: [{
+        appPath: 'data',
+        dataPath: 'data',
+        kind: ShareDeploymentPersistenceBindingKind.Directory,
+      }],
+    };
+    let manifest: Record<string, unknown> | undefined;
+
+    try {
+      const result = await uploadNodeDeployment(
+        'https://server.test',
+        'https://public.test',
+        async (_url, options) => {
+          const form = options?.body as FormData;
+          manifest = JSON.parse(String(form.get('manifest'))) as Record<string, unknown>;
+          return Response.json({
+            code: 0,
+            data: {
+              deploymentId: 'dep_data',
+              shareId: 'shr_data',
+              url: 'https://public.test/share/shr_data',
+              status: 'live',
+              deploymentStatus: 'queued',
+            },
+          });
+        },
+        {
+          sessionId: 'session-1',
+          artifactId: 'artifact-1',
+          title: 'Persistent service',
+          localServiceUrl: 'http://localhost:8000',
+          projectDirectory: tempDirectory,
+          nodeVersion: '20',
+          installCommand: 'npm install',
+          buildCommand: '',
+          startCommand: 'npm start',
+          port: 8000,
+          persistence,
+          archivePath,
+          sourceSha256: 'source-hash',
+          archiveBytes: 22,
+          clientSourceKey: 'client-key',
+          analysis: {
+            success: true,
+            projectDirectory: tempDirectory,
+            packageManager: ShareDeploymentPackageManager.Npm,
+            nodeVersion: '20',
+            installCommand: 'npm install',
+            buildCommand: '',
+            startCommand: 'npm start',
+            port: 8000,
+            totalFiles: 1,
+            totalBytes: 22,
+            excludedCount: 0,
+            persistence: detectedPersistence,
+            warnings: [],
+            blockers: [],
+          },
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(manifest).not.toHaveProperty('persistence');
     } finally {
       await fs.promises.rm(tempDirectory, { recursive: true, force: true });
     }
@@ -251,6 +357,37 @@ describe('deployment persistence data management client', () => {
       const result = await downloadDeploymentPersistenceArchive(
         'https://server.test',
         async () => new Response(null, { status: 204 }),
+        {
+          deploymentId: 'dep_data',
+          shareId: 'shr_data',
+          projectDirectory: tempDirectory,
+        },
+      );
+
+      expect(result).toEqual({
+        success: true,
+        empty: true,
+      });
+      expect(fs.existsSync(path.join(tempDirectory, '.lobster'))).toBe(false);
+    } finally {
+      await fs.promises.rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('reports a missing cloud data directory without saving an error response', async () => {
+    const tempDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-persistence-client-missing-test-'),
+    );
+
+    try {
+      const result = await downloadDeploymentPersistenceArchive(
+        'https://server.test',
+        async () => Response.json({
+          code: 41505,
+          message:
+            'Failed to export service data through the temporary service data function (HTTP 404): Cloud data does not exist.',
+          data: null,
+        }, { status: 500 }),
         {
           deploymentId: 'dep_data',
           shareId: 'shr_data',

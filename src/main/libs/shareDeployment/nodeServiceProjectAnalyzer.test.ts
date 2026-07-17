@@ -157,6 +157,7 @@ describe('buildNodeServiceProjectPackagePlan', () => {
     await writeFile(projectDirectory, 'server.js', 'console.log("server");');
     await writeFile(projectDirectory, 'db.sqlite', 'sqlite');
     await writeFile(projectDirectory, 'data/comments.json', '[]');
+    await writeFile(projectDirectory, 'data/app.sqlite', 'db');
     await writeFile(projectDirectory, 'uploads/avatar.txt', 'avatar');
 
     const plan = await buildNodeServiceProjectPackagePlan({
@@ -173,7 +174,7 @@ describe('buildNodeServiceProjectPackagePlan', () => {
           appPath: 'data',
           dataPath: 'data',
           kind: ShareDeploymentPersistenceBindingKind.Directory,
-          sizeBytes: 2,
+          sizeBytes: 4,
         },
         {
           appPath: 'db.sqlite',
@@ -390,5 +391,61 @@ describe('detectNodeServiceProjectCandidates', () => {
         confidence: 35,
       }),
     ]));
+  });
+
+  test('uses session context before cached and working directories when the service is offline', async () => {
+    const contextProjectDirectory = await makeTempStaticSiteProject();
+    const cachedProjectDirectory = await makeTempStaticSiteProject();
+    const workingDirectory = await makeTempStaticSiteProject();
+
+    const candidates = await detectNodeServiceProjectCandidates({
+      localServiceUrl: 'http://localhost:65530',
+      workingDirectory,
+      projectCandidates: [
+        {
+          directory: contextProjectDirectory,
+          source: ShareDeploymentCandidateSource.TextCdCommand,
+          confidence: 10,
+          reason: 'Matched the service directory from session context.',
+        },
+      ],
+      cachedProjectDirectory,
+    });
+
+    expect(candidates.map(candidate => candidate.directory)).toEqual([
+      contextProjectDirectory,
+      cachedProjectDirectory,
+      workingDirectory,
+    ]);
+  });
+
+  test('falls back to the working directory when the offline service has no context', async () => {
+    const workingDirectory = await makeTempStaticSiteProject();
+
+    const candidates = await detectNodeServiceProjectCandidates({
+      localServiceUrl: 'http://localhost:65530',
+      workingDirectory,
+    });
+
+    expect(candidates[0]).toEqual(expect.objectContaining({
+      directory: workingDirectory,
+      source: ShareDeploymentCandidateSource.Workspace,
+    }));
+  });
+
+  test('does not guess a child project when the working directory itself is not deployable', async () => {
+    const workingDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'lobster-workspace-analyzer-test-'),
+    );
+    tempDirectories.push(workingDirectory);
+    const childProjectDirectory = path.join(workingDirectory, 'child-project');
+    await writeFile(childProjectDirectory, 'index.html', '<!doctype html>');
+
+    const candidates = await detectNodeServiceProjectCandidates({
+      localServiceUrl: 'http://localhost:65530',
+      workingDirectory,
+    });
+
+    expect(candidates).toEqual([]);
   });
 });
