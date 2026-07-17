@@ -46,9 +46,14 @@ import type {
   ShareDeploymentCreateNodeInput,
   ShareDeploymentDetectCandidatesInput,
   ShareDeploymentDetectCandidatesResult,
+  ShareDeploymentDownloadPersistenceInput,
+  ShareDeploymentDownloadPersistenceResult,
   ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentPersistenceInfoResult,
   ShareDeploymentProjectAnalysis,
   ShareDeploymentResult,
+  ShareDeploymentSelectPersistencePathInput,
+  ShareDeploymentSelectPersistencePathResult,
 } from '../../shared/shareDeployment/constants';
 import type {
   ShellGetBrowserAppsInput,
@@ -416,7 +421,7 @@ import type { Platform } from '@shared/platform';
 import type { Agent, PresetAgent } from './agent';
 
 interface CreditItem {
-  type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation';
+  type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation' | 'campaign';
   label: string;
   labelEn: string;
   creditsRemaining: number;
@@ -439,6 +444,39 @@ interface CreditsResetCampaignStatusData {
   endAt: string;
   registeredBefore: string;
   reason: string;
+  resetEntitlements: CreditsResetEntitlementData[];
+  availableFreeCreditsRewardCount: number;
+  freeCreditsReward: FreeCreditsRewardData | null;
+  freeCreditsRewards?: FreeCreditsRewardData[];
+}
+
+interface CreditsResetEntitlementData {
+  campaignCode: string;
+  expiresAt: string;
+}
+
+interface FreeCreditsRewardData {
+  campaignCode: string;
+  credits: number;
+  claimDeadline: string;
+  validityDays: number;
+  presentation?: CampaignPresentationData | null;
+}
+
+interface CampaignPresentationData {
+  titleZh?: string | null;
+  titleEn?: string | null;
+  actionTextZh?: string | null;
+  actionTextEn?: string | null;
+  posterUrl?: string | null;
+  iconUrl?: string | null;
+}
+
+interface CreditsFinalRewardClaimData {
+  campaignCode: string;
+  creditsGranted: number;
+  claimedAt: string;
+  expiresAt: string;
 }
 
 interface ProfileSummaryData {
@@ -1187,11 +1225,18 @@ interface IElectronAPI {
     analyzeProjectDirectory: (
       options: ShareDeploymentAnalyzeProjectInput,
     ) => Promise<ShareDeploymentProjectAnalysis>;
+    selectPersistencePath: (
+      options: ShareDeploymentSelectPersistencePathInput,
+    ) => Promise<ShareDeploymentSelectPersistencePathResult>;
     createNodeDeployment: (
       options: ShareDeploymentCreateNodeInput,
     ) => Promise<ShareDeploymentResult>;
     get: (deploymentId: string) => Promise<ShareDeploymentResult>;
     getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) => Promise<ShareDeploymentResult>;
+    getPersistence: (deploymentId: string) => Promise<ShareDeploymentPersistenceInfoResult>;
+    downloadPersistenceArchive: (
+      options: ShareDeploymentDownloadPersistenceInput,
+    ) => Promise<ShareDeploymentDownloadPersistenceResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
@@ -1643,6 +1688,7 @@ interface IElectronAPI {
       error?: string;
     }>;
     getProfileSummary: () => Promise<{ success: boolean; data?: ProfileSummaryData }>;
+    claimCreditsFinalReward: (campaignCode: string) => Promise<{ success: boolean; data?: CreditsFinalRewardClaimData; error?: string }>;
     getActiveClientBanner: () => Promise<{ success: boolean; data?: ClientBannerData | null }>;
     getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;
     getPendingCallback: () => Promise<string | null>;

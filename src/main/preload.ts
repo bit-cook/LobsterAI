@@ -41,8 +41,10 @@ import {
   type ShareDeploymentAnalyzeProjectInput,
   type ShareDeploymentCreateNodeInput,
   type ShareDeploymentDetectCandidatesInput,
+  type ShareDeploymentDownloadPersistenceInput,
   type ShareDeploymentGetByLocalServiceInput,
   ShareDeploymentIpc,
+  type ShareDeploymentSelectPersistencePathInput,
 } from '../shared/shareDeployment/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
 import { SkinIpc } from '../shared/skin/constants';
@@ -741,11 +743,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(ShareDeploymentIpc.DetectProjectCandidates, options),
     analyzeProjectDirectory: (options: ShareDeploymentAnalyzeProjectInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.AnalyzeProjectDirectory, options),
+    selectPersistencePath: (options: ShareDeploymentSelectPersistencePathInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.SelectPersistencePath, options),
     createNodeDeployment: (options: ShareDeploymentCreateNodeInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.CreateNodeDeployment, options),
     get: (deploymentId: string) => ipcRenderer.invoke(ShareDeploymentIpc.Get, deploymentId),
     getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.GetByLocalService, options),
+    getPersistence: (deploymentId: string) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.GetPersistence, deploymentId),
+    downloadPersistenceArchive: (options: ShareDeploymentDownloadPersistenceInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.DownloadPersistenceArchive, options),
   },
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) =>
@@ -1053,6 +1061,8 @@ contextBridge.exposeInMainWorld('electron', {
     getModels: () => ipcRenderer.invoke('auth:getModels'),
     getPricingCatalog: () => ipcRenderer.invoke(AuthIpcChannel.GetPricingCatalog),
     getProfileSummary: () => ipcRenderer.invoke('auth:getProfileSummary'),
+    claimCreditsFinalReward: (campaignCode: string) =>
+      ipcRenderer.invoke('auth:claimCreditsFinalReward', { campaignCode }),
     getActiveClientBanner: () => ipcRenderer.invoke('auth:getActiveClientBanner'),
     getActiveClientBanners: () => ipcRenderer.invoke('auth:getActiveClientBanners'),
     getPendingCallback: () => ipcRenderer.invoke(AuthIpcChannel.GetPendingCallback),
