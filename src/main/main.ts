@@ -10407,6 +10407,10 @@ if (!gotTheLock) {
     return getAppUpdateCoordinator().installReadyUpdate();
   });
 
+  ipcMain.handle(AppUpdateIpc.GetCompletedUpdate, async () => {
+    return { version: getAppUpdateCoordinator().consumeCompletedUpdateVersion() };
+  });
+
   // Helper: detect if a URL belongs to GitHub Copilot and apply token refresh on 401.
   const isCopilotUrl = (url: string) => url.includes('githubcopilot.com');
   const retryCopilotWithRefreshedToken = async (opts: {
