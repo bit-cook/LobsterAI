@@ -234,29 +234,34 @@
     ; puts the payload extraction, ~90% of install time, under the same
     ; protection.
     ;
-    ; Scope:
-    ;  - win-resources.tar: the single biggest win (a ~2GB file whose
-    ;    close-handle full scan is the worst case). Temporary: the entry is
-    ;    removed again at the end of customInstall, and a successful
-    ;    extraction deletes the file itself anyway.
-    ;  - cfmind / python-win / app.asar.unpacked: the same permanent entries
-    ;    the previous design used (runtime trees, thousands of small files).
-    ;  - SKILLs is deliberately NO LONGER excluded: it is user-writable and
-    ;    its content is executed by the agent, so it must stay scannable.
-    ;    customInstall drops the entry older installers left behind.
-    ;  - /NoDefenderExclusion skips adding anything (enterprise IT opt-out,
-    ;    also passed by the app when enterprise config demands it). A failing
-    ;    Add-MpPreference (e.g. locked by Intune policy) degrades the same
-    ;    way: slower install, otherwise unaffected.
+    ; Scope: ONE whole-$INSTDIR entry, for the duration of the install only.
+    ; Measured on the same machine with a signed production build, main
+    ; extraction took: 10m56s with the old post-extraction exclusions, 3m47s
+    ; with an up-front path-list (tar + runtime dirs), and 1m05s with
+    ; real-time protection off -- signing does not soften the ~160s Defender
+    ; keeps spending on the Electron binaries and app.asar, and a path list
+    ; can never cover them all. The whole-directory entry closes that gap and
+    ; is strictly bounded:
+    ;  - the end of customInstall replaces it with the three narrow permanent
+    ;    entries (cfmind, python-win, app.asar.unpacked);
+    ;  - an interrupted install leaves it behind only until the next
+    ;    install or uninstall, both of which remove it unconditionally
+    ;    (the entry path is always $INSTDIR, so any later run self-heals);
+    ;  - SKILLs stays permanently scannable (user-writable, agent-executed);
+    ;  - /NoDefenderExclusion skips every Add (enterprise IT opt-out, also
+    ;    passed by the app when enterprise config demands it); the
+    ;    unconditional removals still run. A failing Add-MpPreference (e.g.
+    ;    locked by Intune policy) degrades the same way: slower install,
+    ;    otherwise unaffected.
     ; GetOptions leaves the error flag set when the switch is absent, so:
-    ; error (switch absent) -> fall through and add exclusions;
+    ; error (switch absent) -> fall through and add the exclusion;
     ; no error (switch present) -> jump past the whole block.
     ${GetParameters} $R9
     ClearErrors
     ${GetOptions} $R9 "/NoDefenderExclusion" $R8
     IfErrors 0 DefenderExclusionAddSkipped
 
-    DetailPrint "[Installer] Adding Windows Defender exclusions before extraction"
+    DetailPrint "[Installer] Adding Windows Defender install-scope exclusion"
     FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
@@ -266,7 +271,7 @@
     CreateDirectory "$INSTDIR\resources\cfmind"
     CreateDirectory "$INSTDIR\resources\python-win"
     CreateDirectory "$INSTDIR\resources\SKILLs"
-    nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender exclusions added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
+    nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender install-scope exclusion added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
     Pop $0
     StrCpy $R2 $0
     System::Call 'kernel32::GetTickCount()i .r6'
@@ -481,13 +486,13 @@
   ; The unpack script is deleted in TarExtractSucceeded above; after a failed
   ; extraction it is intentionally kept alongside win-resources.tar.
 
-  ; -- Trim temporary/legacy Defender exclusions --
-  ; The win-resources.tar entry only mattered during extraction; the SKILLs
-  ; entry is what older installers added permanently and must not survive an
-  ; upgrade (user-writable, agent-executed -- it has to stay scannable).
-  ; Unconditional (no skip-flag check): this only ever narrows exclusions.
-  ; Best effort: entries that do not exist are silently ignored.
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\SKILLs$\" -ErrorAction SilentlyContinue } catch {}"'
+  ; -- Rebalance Defender exclusions now that extraction is done --
+  ; Unconditionally remove the install-scope whole-directory entry plus every
+  ; temporary/legacy entry any earlier version may have left behind (tar and
+  ; app.asar from the path-list era, SKILLs from the permanent era, and a
+  ; whole-directory leftover from an interrupted install -- the entry path is
+  ; always $INSTDIR, so this step self-heals it).
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR$\",$\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\app.asar$\",$\"$INSTDIR\resources\SKILLs$\" -ErrorAction SilentlyContinue } catch {}"'
   Pop $0
   Pop $1
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
@@ -495,6 +500,23 @@
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=defender-exclusion-trim-complete exit=$0$\r$\n"
   FileClose $2
+
+  ; Re-add the narrow permanent entries (runtime trees with thousands of
+  ; small files; SKILLs deliberately absent). Skipped entirely when the
+  ; /NoDefenderExclusion opt-out is present -- the removals above are not.
+  ${GetParameters} $R9
+  ClearErrors
+  ${GetOptions} $R9 "/NoDefenderExclusion" $R8
+  IfErrors 0 DefenderPermanentAddSkipped
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop } catch {}"'
+  Pop $0
+  Pop $1
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=defender-exclusion-permanent-complete exit=$0$\r$\n"
+  FileClose $2
+  DefenderPermanentAddSkipped:
 
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
   FileSeek $2 0 END
@@ -516,10 +538,11 @@
 !macro customUnInstall
   ; -- Remove Windows Defender Exclusion on uninstall --
   ; Clean up every exclusion any installer version may have added: the
-  ; current permanent set, the SKILLs entry from older versions, and the
-  ; temporary win-resources.tar entry in case an install was interrupted
-  ; before its trim step ran.
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\",$\"$INSTDIR\resources\win-resources.tar$\" -ErrorAction SilentlyContinue } catch {}"'
+  ; current permanent set, the SKILLs entry from older versions, the
+  ; single-file entries from the path-list era, and the install-scope
+  ; whole-directory entry in case an install was interrupted before its
+  ; rebalance step ran.
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR$\",$\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\",$\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\app.asar$\" -ErrorAction SilentlyContinue } catch {}"'
   Pop $0
   Pop $1
 !macroend
