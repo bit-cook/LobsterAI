@@ -193,8 +193,13 @@ describe('SkinStore', () => {
 
     const ready = await store.getSkin('skin-one');
     expect(ready?.status).toBe(SkinRecordStatus.Ready);
-    await store.apply('skin-one');
-    expect((await createStore(rootDir).getActive())?.id).toBe('skin-one');
+    await store.apply('skin-one', 'midnight');
+    expect(await createStore(rootDir).getActive()).toMatchObject({
+      id: 'skin-one',
+      boundThemeId: 'midnight',
+    });
+    await store.apply('skin-one', 'ocean');
+    expect((await store.getActive())?.boundThemeId).toBe('midnight');
     await store.deactivate();
     expect(await store.getActive()).toBeNull();
     expect((await createStore(rootDir).listSkins()).map(skin => skin.id)).toEqual(['skin-one']);
@@ -217,6 +222,24 @@ describe('SkinStore', () => {
     await store.apply('skin-one');
     await store.apply('skin-two');
     expect((await store.getActive())?.id).toBe('skin-two');
+  });
+
+  test('adds a theme binding to an existing skin without requiring a registry migration', async () => {
+    const { rootDir } = createTempWorkspace();
+    const store = createStore(rootDir);
+    const legacySkin = await store.createDraft();
+
+    expect(legacySkin.boundThemeId).toBeUndefined();
+
+    await expect(store.bindTheme('skin-one', 'classic-dark')).resolves.toMatchObject({
+      id: 'skin-one',
+      boundThemeId: 'classic-dark',
+    });
+    await expect(store.bindTheme('skin-one', 'ocean')).resolves.toMatchObject({
+      boundThemeId: 'classic-dark',
+    });
+    expect((await createStore(rootDir).getSkin('skin-one'))?.boundThemeId)
+      .toBe('classic-dark');
   });
 
   test('lists newer skins first without reordering them when an older skin is applied', async () => {
